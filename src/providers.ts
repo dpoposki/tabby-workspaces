@@ -51,28 +51,31 @@ export class WorkspacesTabContextMenu extends TabContextMenuItemProvider {
 /** Toolbar badge (workspace color + initial) and command palette entries. */
 @Injectable()
 export class WorkspacesCommandProvider extends CommandProvider {
-    private badge: Command
-
     constructor (private workspaces: WorkspacesService) {
         super()
-        // Toolbar buttons are collected once per window, so label and icon are live getters
-        const service = this.workspaces
-        this.badge = Object.defineProperties(new Command(), {
-            label: { get: () => service.current ? `Workspace: ${service.current.name}` : 'Workspaces' },
-            icon: { get: () => badgeIcon(service.current?.name, service.current?.color) },
-        })
-        this.badge.id = 'workspaces:menu'
-        this.badge.locations = [CommandLocation.RightToolbar]
-        this.badge.weight = -10
-        this.badge.run = () => this.workspaces.showMenu()
     }
 
     async provide (_context: CommandContext): Promise<Command[]> {
+        // Must be a fresh object on every call: CommandService wraps `run` in its
+        // global serialization queue each time, and wrapping the same object twice
+        // deadlocks that queue (freezing every toolbar button and command).
+        const service = this.workspaces
+        // Toolbar buttons are collected once per window, so label and icon are live getters
+        const badge = Object.defineProperties(new Command(), {
+            label: { get: () => service.current ? `Workspace: ${service.current.name}` : 'Workspaces' },
+            icon: { get: () => badgeIcon(service.current?.name, service.current?.color) },
+        })
+        badge.id = 'workspaces:menu'
+        badge.locations = [CommandLocation.RightToolbar]
+        badge.weight = -10
+        // Don't hold Tabby's command queue while the menu (and any prompt it opens) is up
+        badge.run = async () => { service.showMenu().catch(error => console.error('[workspaces]', error)) }
+
         const open = new Command()
         open.id = 'workspaces:open'
         open.label = 'Workspaces: Open another workspace'
-        open.run = () => this.workspaces.showPicker('open')
-        return [this.badge, open]
+        open.run = async () => { service.showPicker('open').catch(error => console.error('[workspaces]', error)) }
+        return [badge, open]
     }
 }
 
