@@ -15,6 +15,14 @@ const PLACEMENT_PREFIX = 'tabbyWorkspaces.window.'
 const BEFORE_COMPACT_KEY = 'tabbyWorkspaces.window.beforeCompact'
 /** Set while the window is compact: Tabby saves that size if it's closed from the launcher */
 const COMPACT_ACTIVE_KEY = 'tabbyWorkspaces.window.compactActive'
+/** Set when a window closed at the launcher's size, so Tabby saved that size for its next window */
+const SAVED_COMPACT_KEY = 'tabbyWorkspaces.window.savedCompact'
+/** Platforms where an invisible window can be resized: Electron's setOpacity does nothing on Linux */
+const RESIZE_UNSEEN_PLATFORMS = ['win32', 'darwin']
+/** Time for Tabby's main process to take in the new size before the window closes */
+const RESIZE_SETTLE_MS = 100
+/** A window this close to the compact size and place counts as already compact */
+const SAME_BOUNDS_PX = 8
 
 export interface Placement {
     bounds: Bounds
@@ -71,18 +79,68 @@ export class WindowPlacement {
             if (this.compact || !win || !area || win.isFullScreen()) {
                 return
             }
-            // If Tabby was closed from the compact launcher, it saved that small size as the
-            // window size; the real one from before is stored already
-            if (!readJson(COMPACT_ACTIVE_KEY)) {
+            // If Tabby saved the compact size at the last close, it opened at that size, and
+            // the real one from before is stored already
+            if (!readJson(COMPACT_ACTIVE_KEY) && !readJson(SAVED_COMPACT_KEY)) {
                 writeJson(BEFORE_COMPACT_KEY, placementOf(win))
             }
+            const compactBounds = centeredIn(area, COMPACT_SIZE)
+            if (win.isMaximized()) {
+                win.unmaximize()
+            }
+            // Opened at the compact size already: leave it alone rather than nudge it
+            if (!sameBounds(win.getBounds(), compactBounds)) {
+                win.setBounds(compactBounds)
+            }
+            writeJson(COMPACT_ACTIVE_KEY, true)
+            this.compact = true
+        })
+    }
+
+    /**
+     * Right before the window closes. Tabby's main process saves the size the window has
+     * when it closes and opens the next window (also at the next start) at that size,
+     * before any plugin runs. So with the launcher at startup the window is made invisible
+     * and given the launcher's size first: the next start opens small, without a full-size
+     * window first. `forLauncher` is false when the next start doesn't show the launcher.
+     */
+    async beforeWindowGoes (forLauncher: boolean): Promise<void> {
+        this.save()
+        const win = this.nativeWindow()
+        const area = win && screen()?.getDisplayMatching(win.getBounds()).workArea
+        if (!forLauncher || !win || !area || !RESIZE_UNSEEN_PLATFORMS.includes(process.platform)
+            || win.isMinimized() || win.isFullScreen()) {
+            // Tabby saves this window's own size
+            localStorage.removeItem(SAVED_COMPACT_KEY)
+            return
+        }
+        this.safely(() => {
+            // The size to grow back to when the next launcher is left without a workspace
+            if (!this.compact) {
+                writeJson(BEFORE_COMPACT_KEY, placementOf(win))
+            }
+            writeJson(SAVED_COMPACT_KEY, true)
+            win.setOpacity(0)
             if (win.isMaximized()) {
                 win.unmaximize()
             }
             win.setBounds(centeredIn(area, COMPACT_SIZE))
-            writeJson(COMPACT_ACTIVE_KEY, true)
-            this.compact = true
         })
+        await new Promise(resolve => setTimeout(resolve, RESIZE_SETTLE_MS))
+    }
+
+    /**
+     * Another window is about to open. If Tabby saved the launcher's size at a close, the
+     * new window would open small; give it the real size from before, as Tabby would.
+     */
+    beforeNewWindow (): void {
+        const placement = readJson(SAVED_COMPACT_KEY) ? readPlacement(BEFORE_COMPACT_KEY) : null
+        if (placement) {
+            this.safely(() => {
+                this.compat.writeSavedWindowState(placement)
+                localStorage.removeItem(SAVED_COMPACT_KEY)
+            })
+        }
     }
 
     /** Back to full size after the launcher, when no workspace was picked (guest mode, Esc) */
@@ -154,6 +212,12 @@ export function centeredIn (area: Bounds, size: { width: number, height: number 
         width,
         height,
     }
+}
+
+/** Whether two window rectangles are the same, give or take a few pixels of frame */
+export function sameBounds (a: Bounds, b: Bounds): boolean {
+    return Math.abs(a.x - b.x) <= SAME_BOUNDS_PX && Math.abs(a.y - b.y) <= SAME_BOUNDS_PX
+        && Math.abs(a.width - b.width) <= SAME_BOUNDS_PX && Math.abs(a.height - b.height) <= SAME_BOUNDS_PX
 }
 
 /** Whether enough of the window is on one of the screens to grab it */

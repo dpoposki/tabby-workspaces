@@ -1,5 +1,7 @@
 import { Injectable } from '@angular/core'
-import { AppService, BaseTabComponent, HostWindowService, TabRecoveryService } from 'tabby-core'
+import * as fs from 'fs'
+import * as path from 'path'
+import { AppService, BaseTabComponent, HostAppService, HostWindowService, TabRecoveryService } from 'tabby-core'
 import { tagWslShells } from './wsl'
 
 /*
@@ -14,6 +16,8 @@ import { tagWslShells } from './wsl'
  * - session.ts: the shape of recovery tokens (split container → leaf with `profile`)
  * - taskbar.ts: Tabby's logo at `<resources>/app.asar/assets/logo.svg`
  * - providers.ts: CLI handler priorities relative to Tabby's own (-999 and -1000)
+ * - writeSavedWindowState: Tabby's window.json (`windowBoundaries`, `maximized`), which its
+ *   main process reads for every new window and rewrites whenever a window closes
  */
 
 /** The parts of Electron's BrowserWindow the plugin uses (Windows/Linux only) */
@@ -29,6 +33,8 @@ export interface NativeWindow {
     isFullScreen (): boolean
     maximize (): void
     unmaximize (): void
+    /** 0–1; Windows and macOS only */
+    setOpacity (opacity: number): void
 }
 
 export interface Bounds {
@@ -49,6 +55,10 @@ export interface TabbyHooks {
     afterCloseWindow (cancelled: boolean): void
     /** The OS window title for a tab title (undefined when no tab is active) */
     decorateTitle (title: string | undefined): string | undefined
+    /** Right before the window closes for good (its tabs are gone); the close waits for it */
+    beforeWindowGoes (): Promise<void>
+    /** Before Tabby's main process opens another window */
+    beforeNewWindow (): void
 }
 
 @Injectable({ providedIn: 'root' })
@@ -57,6 +67,7 @@ export class TabbyCompat {
 
     constructor (
         private app: AppService,
+        private hostApp: HostAppService,
         private hostWindow: HostWindowService,
         private tabRecovery: TabRecoveryService,
     ) { }
@@ -71,6 +82,7 @@ export class TabbyCompat {
             ['WSL working directories', () => tagWslShells()],
             ['saving pins', () => this.patchAppService(hooks)],
             ['window titles', () => this.patchWindowTitle(hooks)],
+            ['startup window size', () => this.patchWindowLifecycle(hooks)],
             ['multi-window tab recovery', () => this.disableBuiltinTabRecovery()],
         ]
         return features.filter(([, install]) => !tryInstall(install)).map(([name]) => name)
@@ -118,6 +130,45 @@ export class TabbyCompat {
             }
         })
         return true
+    }
+
+    /**
+     * Both of Tabby's close paths (closeWindow, and the last tab closing with
+     * "lastTabClosesWindow") end in hostWindow.close(), after the tabs are gone; every
+     * new window (hotkey, launcher, second instance) goes through hostApp.newWindow().
+     */
+    private patchWindowLifecycle (hooks: TabbyHooks): boolean {
+        if (typeof (this.hostWindow as any).close !== 'function' || typeof (this.hostApp as any).newWindow !== 'function') {
+            return false
+        }
+        patchMethod(this.hostWindow, 'close', original => () => {
+            hooks.beforeWindowGoes().catch(() => undefined).finally(() => original())
+        })
+        patchMethod(this.hostApp, 'newWindow', original => () => {
+            try {
+                hooks.beforeNewWindow()
+            } finally {
+                original()
+            }
+        })
+        return true
+    }
+
+    /**
+     * Rewrites the window size in Tabby's window.json (same format as Tabby's electron-store),
+     * keeping any other keys. Tabby gives it to the next window it opens.
+     */
+    writeSavedWindowState (state: { bounds: Bounds, maximized: boolean }): void {
+        const file = path.join(require('@electron/remote').app.getPath('userData'), 'window.json')
+        let saved: Record<string, unknown> = {}
+        try {
+            saved = JSON.parse(fs.readFileSync(file, 'utf8')) ?? {}
+        } catch { }
+        saved.windowBoundaries = state.bounds
+        saved.maximized = state.maximized
+        const temp = `${file}.workspaces-tmp`
+        fs.writeFileSync(temp, JSON.stringify(saved, null, '\t'))
+        fs.renameSync(temp, file)
     }
 
     private patchWindowTitle (hooks: TabbyHooks): boolean {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { centeredIn, isVisibleOn, parsePlacement } from '../src/window-placement'
+import { centeredIn, isVisibleOn, parsePlacement, sameBounds } from '../src/window-placement'
 
 const screen = { x: 0, y: 0, width: 1920, height: 1040 }
 const right = { x: 1920, y: 0, width: 2560, height: 1400 }
@@ -11,6 +11,13 @@ describe('window placement', () => {
 
     it('shrinks it to fit a small screen', () => {
         expect(centeredIn({ x: 0, y: 0, width: 800, height: 500 }, { width: 900, height: 620 })).toEqual({ x: 0, y: 0, width: 800, height: 500 })
+    })
+
+    it('counts a window a few pixels off as already compact', () => {
+        const compact = { x: 510, y: 210, width: 900, height: 620 }
+        expect(sameBounds({ x: 509, y: 209, width: 902, height: 622 }, compact)).toBe(true)
+        expect(sameBounds({ x: 0, y: 0, width: 1920, height: 1040 }, compact)).toBe(false)
+        expect(sameBounds({ x: 510, y: 210, width: 997, height: 724 }, compact)).toBe(false)
     })
 
     it('puts a window back only if enough of it is on a screen', () => {

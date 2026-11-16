@@ -26,7 +26,7 @@ When Tabby starts, it shows the launcher: one card per workspace, with its color
 - **Show on startup** (bottom right) switches the launcher off, so Tabby starts with a terminal as usual.
 - `Esc` closes the launcher.
 
-At startup the launcher is a small window in the middle of the screen, like Chrome's profile picker. Tabby shows its window before plugins load, so the window first appears at its usual size and then shrinks. It grows to the workspace's size once you pick one.
+At startup the launcher is a small window in the middle of the screen, like Chrome's profile picker. It grows to the workspace's size once you pick one. Tabby shows its window before plugins load, so the plugin gives the window the launcher's size as it closes, and Tabby opens it at that size the next time. Only the first start after installing (and every start on Linux) shows the window at its usual size first, then shrinks it.
 
 ![Adding a workspace](docs/screenshots/launcher-add.png)
 

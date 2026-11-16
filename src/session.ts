@@ -21,7 +21,7 @@ const SAVE_INTERVAL_MS = 10_000
  * workspace is attached, and saving them as they change. One per window.
  */
 @Injectable({ providedIn: 'root' })
-export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
+export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle' | 'beforeWindowGoes' | 'beforeNewWindow'> {
     /** Workspace shown in this window (null: a plain, unsaved window); emits on every change, renames included */
     readonly current$ = new BehaviorSubject<Workspace | null>(null)
     /** Fires once when a workspace is loaded into this window */

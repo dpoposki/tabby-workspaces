@@ -8,6 +8,7 @@ import { WorkspaceSession } from './session'
 import { WindowChrome } from './window-chrome'
 import { TabbyCompat } from './tabby-compat'
 import { WindowPlacement } from './window-placement'
+import { launcherAtNextStart } from './config'
 
 /** Lets Tabby finish its own startup before a handed-off workspace is restored */
 const STARTUP_DELAY_MS = 300
@@ -60,6 +61,8 @@ export class WorkspacesService {
             },
             afterCloseWindow: cancelled => this.session.afterCloseWindow(cancelled),
             decorateTitle: title => this.chrome.decorateTitle(title),
+            beforeWindowGoes: () => this.placement.beforeWindowGoes(launcherAtNextStart(this.config)),
+            beforeNewWindow: () => this.placement.beforeNewWindow(),
         })
         if (failed.length) {
             setTimeout(() => this.notifications.error(

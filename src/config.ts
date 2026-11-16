@@ -44,6 +44,12 @@ export function workspacesSettings (config: ConfigService): WorkspacesSettings {
     return config.store.workspaces
 }
 
+/** Whether the next start shows the launcher (Tabby's own welcome screen comes first) */
+export function launcherAtNextStart (config: ConfigService): boolean {
+    const settings = workspacesSettings(config)
+    return settings.showLauncher && !settings.openLastWorkspace && !config.store.enableWelcomeTab
+}
+
 /** The start page count, kept in bounds even if config.yaml was edited by hand */
 export function startPageCount (settings: WorkspacesSettings): number {
     const count = Math.round(Number(settings.startPageCount))

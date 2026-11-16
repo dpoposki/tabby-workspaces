@@ -3,6 +3,7 @@ export class BaseTabComponent { }
 export class ConfigProvider { }
 export class ConfigService { }
 export class AppService { }
+export class HostAppService { }
 export class HostWindowService { }
 export class NotificationsService { }
 export class PlatformService { }
