@@ -104,18 +104,11 @@ An export includes the connection profiles of the pinned tabs, so treat the file
 
 ## Install
 
-The plugin isn't in Tabby's plugin store yet. To install it from source (you need Node.js):
+In Tabby, open **Settings → Plugins**, search for **workspaces** and click **Install** on `workspaces`. Then quit Tabby completely and start it again.
 
-```bash
-git clone https://github.com/dpoposki/tabby-workspaces.git
-cd tabby-workspaces
-npm install --legacy-peer-deps
-npm run build
-```
+Requires Tabby 2.1 or newer (it uses Tabby's pinned tabs).
 
-Copy `package.json` and the `dist` folder into a `tabby-workspaces` folder in Tabby's plugin folder: `%APPDATA%\tabby\plugins\node_modules` on Windows, `~/Library/Application Support/tabby/plugins/node_modules` on macOS, `~/.config/tabby/plugins/node_modules` on Linux. Then quit Tabby completely and start it again.
-
-To uninstall, delete that folder.
+To uninstall, click **Uninstall** in the same place.
 
 ## Good to know
 

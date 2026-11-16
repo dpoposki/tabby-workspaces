@@ -1,21 +1,35 @@
 {
   "name": "tabby-workspaces",
   "version": "0.1.0",
-  "description": "Chrome-like workspaces for Tabby: one window per workspace, named pinned tabs restored on open",
+  "description": "Chrome-style workspaces for Tabby: one window per workspace, with named pinned tabs that come back where you left them",
   "keywords": [
-    "tabby-plugin"
+    "tabby-plugin",
+    "tabby",
+    "workspaces",
+    "pinned-tabs",
+    "wsl",
+    "tmux"
   ],
   "main": "dist/index.js",
   "scripts": {
     "build": "webpack --mode production",
     "watch": "webpack --mode development --watch",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "prepublishOnly": "npm run typecheck && npm run build"
   },
   "files": [
     "dist"
   ],
   "license": "MIT",
   "author": "Darko Poposki",
+  "homepage": "https://github.com/dpoposki/tabby-workspaces#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dpoposki/tabby-workspaces.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dpoposki/tabby-workspaces/issues"
+  },
   "devDependencies": {
     "@angular/common": "^15.2.10",
     "@angular/core": "^15.2.10",
