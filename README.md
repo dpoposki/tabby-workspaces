@@ -1,48 +1,133 @@
 # Tabby Workspaces
 
-Chrome-like workspaces for [Tabby](https://tabby.sh): one window per workspace, and pinned, named tabs that come back each time you open it.
+Chrome-style workspaces for the [Tabby](https://tabby.sh) terminal. Each workspace gets its own window, and its pinned, named tabs come back every time you open it, in the folder you left them in.
 
-## Build & install
+![The workspace launcher](docs/screenshots/launcher.png)
+
+## Features
+
+- **[Startup launcher](#startup-launcher)**: Tabby starts with a list of your workspaces, like Chrome's profile picker
+- **[One window per workspace](#one-window-per-workspace)**: a colored badge, stripe and window title show which workspace a window belongs to
+- **[Pinned tabs that come back](#pinned-tabs)**: named, with their profile, working directory and an optional startup command
+- **[WSL working directory](#wsl-working-directory)**: WSL tabs reopen in the folder you `cd`'d to, without any shell setup
+- **[Persistent tmux sessions](#persistent-tmux-sessions)**: a WSL pin can attach to a tmux session that survives closing the window
+- **[Workspaces on the start page](#start-page)**: empty windows list your recent workspaces
+- **[Own taskbar icon per workspace](#taskbar-icons)**: on Windows, each workspace gets its own taskbar button
+- **[Settings page, export and import](#settings)**
+
+### Startup launcher
+
+When Tabby starts, it shows the launcher: one card per workspace, with its color, initial and number of pinned tabs. Click a card or press `1`–`9` to open it; the arrow keys move between cards. A card also shows when you last used the workspace, or that it's open in another window.
+
+- **Add** turns into a small form for a name and a color.
+- **Guest mode** opens a plain Tabby window that saves nothing.
+- **Show on startup** (bottom right) switches the launcher off, so Tabby starts with a terminal as usual.
+- `Esc` closes the launcher.
+
+![Adding a workspace](docs/screenshots/launcher-add.png)
+
+Hover a card and click **⋯**, or right-click it, to rename it, change its color or delete it. A workspace can only be deleted while no window has it open. If you rename a workspace, launchers open in other windows update right away.
+
+![Card menu](docs/screenshots/launcher-menu.png)
+
+You can open the launcher at any time:
+- Click the colored badge in the tab bar.
+- Press `Ctrl+Alt+N` (`⌘⌥N` on macOS). Change it under Settings → Hotkeys → "Workspaces: show launcher".
+- Run **Workspaces: Show launcher** from the command palette.
+
+### One window per workspace
+
+The window shows which workspace it belongs to in three places:
+- a colored badge with the workspace's initial in the tab bar
+- a stripe in the workspace's color across the top of the window
+- `[workspace name]` at the start of the window title
+
+![A workspace window](docs/screenshots/window.png)
+
+Picking another workspace from the launcher opens it in a new window. If it's already open somewhere, that window comes to the front instead: a workspace is only ever open in one window, even if two windows try to open it at the same moment.
+
+### Pinned tabs
+
+Right-click a tab and choose **Pin**, or use the `pin-tab` hotkey. You're asked for a name. From then on the tab is part of the workspace. Its profile, working directory, name and startup command are saved as they change, and the tab comes back when you open the workspace again.
+
+Right-click a pinned tab and open **Pinned tab** to:
+- rename the pin
+- set a **startup command**, which runs each time the tab is restored
+- turn on a **persistent tmux session** (WSL tabs only)
+
+![Pinned tab menu](docs/screenshots/pin-menu.png)
+
+Tabs you don't pin last until you close the window, like in Chrome. If you unpin a tab, it stays open but won't come back next time.
+
+### WSL working directory
+
+Tabby can't see where a WSL shell has `cd`'d, because it only controls `wsl.exe`. The plugin fixes this without any change to your shell config. Each WSL shell it starts is tagged with a `TABBY_WORKSPACES_TAB` id (passed in through `WSLENV`). When it saves, it looks that shell's folder up in `/proc`, with one `wsl.exe` call per distro.
+
+### Persistent tmux sessions
+
+This is for WSL tabs only and is off by default. When it's on, the pin attaches to a tmux session named `tabby-<workspace>-<pin>`. That session keeps running when you close the window, so your programs and scrollback are still there when you reopen the workspace. tmux keeps track of its own panes' folders.
+
+Switching tmux off, or unpinning the tab and then closing it, ends the session.
+
+WSL may shut a distro down once all its terminals are closed, and that ends tmux too. If that happens, set `instanceIdleTimeout`/`vmIdleTimeout` in `.wslconfig`.
+
+### Start page
+
+An empty Tabby window lists your recent workspaces on the start page, between **New terminal** and **Profiles & connections**. **All workspaces…** opens the launcher.
+
+![Start page](docs/screenshots/start-page.png)
+
+### Taskbar icons
+
+On Windows and Linux, each workspace window gets the Tabby icon with the workspace's colored initial. On Windows it also gets its own taskbar button, so workspaces aren't all grouped under one Tabby button.
+
+![Taskbar](docs/screenshots/taskbar.png)
+
+macOS has only one Dock icon per app, so the `[workspace name]` in the window title is what tells windows apart there (in the Window menu, the Dock menu and Mission Control).
+
+### Settings
+
+**Settings → Workspaces**:
+
+| Setting | What it does |
+|---|---|
+| Show launcher on startup | Off: Tabby starts with a terminal as usual |
+| List workspaces on the start page | Recent workspaces on an empty window's start page |
+| Toolbar badge | The colored badge in the tab bar (applies to new windows) |
+| Color stripe | The workspace-colored line across the top of the window |
+| Taskbar icon | Per-workspace icon and, on Windows, its own taskbar button |
+| Export / Import | All workspaces and their pins as one JSON file. Import asks whether to merge them into your workspaces or replace them; workspaces open in a window right now are skipped. |
+
+![Settings page](docs/screenshots/settings.png)
+
+An export includes the connection profiles of the pinned tabs, so treat the file as private.
+
+## Install
+
+The plugin isn't in Tabby's plugin store yet. To install it from source (you need Node.js):
 
 ```bash
+git clone https://github.com/dpoposki/tabby-workspaces.git
+cd tabby-workspaces
 npm install --legacy-peer-deps
 npm run build
 ```
 
-Copy `package.json` and `dist` into `%APPDATA%\tabby\plugins\node_modules\tabby-workspaces`, then restart Tabby completely. To uninstall, delete that folder.
+Copy `package.json` and the `dist` folder into a `tabby-workspaces` folder in Tabby's plugin folder: `%APPDATA%\tabby\plugins\node_modules` on Windows, `~/Library/Application Support/tabby/plugins/node_modules` on macOS, `~/.config/tabby/plugins/node_modules` on Linux. Then quit Tabby completely and start it again.
 
-`npm run typecheck` runs the TypeScript checks. `npm run watch` rebuilds on every change.
+To uninstall, delete that folder.
 
-## Usage
+## Good to know
 
-| What | How |
-|---|---|
-| Pick a workspace | When Tabby starts, it shows the **launcher**: a full-window screen with one card per workspace (like Chrome's profile picker). Click a card (or press `1`–`9`) to open it, **Add** to create one, or **Guest mode** for a plain terminal with nothing saved. `Esc` closes the launcher. Empty windows also list your recent workspaces on the start page, between **New terminal** and **Profiles & connections**; **All workspaces…** reopens the launcher, and so does **Workspaces: Show launcher** in the command palette. |
-| Switch, add or open another workspace | Click the colored badge in the tab bar (like Chrome's profile button), press `Ctrl+Alt+N` (`⌘⌥N` on macOS), or run **Workspaces: Show launcher**. Picking a workspace from a window that already has one opens it in a new window; if it's already open, its window comes to the front. |
-| Rename, recolor or delete a workspace | In the launcher, hover a card and click **⋯** (or right-click the card). A workspace can only be deleted while no window has it open. |
-| Export / import | Settings → Workspaces |
-| Pin a tab | Right-click the tab, then **Pin** (or the `pin-tab` hotkey). You're asked for a name. |
-| Rename a pin, set its startup command, toggle tmux | Right-click a pinned tab, then **Pinned tab** |
+- **Explicit launches skip the launcher.** Command-line launches (`tabby run …`, `tabby open …`) and Tabby's first-run welcome screen work as usual. Opening a tab any other way, for example with a hotkey, closes the launcher.
+- **Tabby's own tab restore is paused.** While the plugin is installed, Tabby's "Restore terminal tabs on app start" does nothing, because it only supports one window. Your setting isn't changed and works again if you remove the plugin.
+- **Closing the last tab saves.** With "Close the window after closing the last tab" on, closing a workspace's last pinned tab by hand closes the window and leaves the workspace with no pins.
+- **Your data is protected:**
+  - If stored data can't be read, it's set aside and you get a notification. It's never overwritten.
+  - Data written by a newer version of the plugin is opened read-only.
+  - An export from a newer version is refused on import.
+  - Pinned tabs that can't be restored (for example, their profile was deleted) are kept, and tried again the next time you open the workspace.
 
-You can change the hotkey under Settings → Hotkeys ("Workspaces: show launcher").
+## License
 
-### Settings
-**Settings → Workspaces**:
-- **Show launcher on startup**: off gives you Tabby's usual startup (a terminal).
-- **List workspaces on the start page**
-- **Toolbar badge**: the colored badge in the tab bar (applies to new windows).
-- **Color stripe**: the workspace-colored line across the top of the window.
-- **Taskbar icon** (Windows, Linux): each workspace window gets the Tabby icon with the workspace's colored initial, and on Windows its own taskbar button.
-- **Export / Import**: all workspaces and their pins as one JSON file.
-
-### Behaviour
-- Pinned tabs are saved continuously: profile, working directory, name and startup command.
-- **WSL working directory** works without any shell setup. Tabby itself can't see where a WSL shell has `cd`'d (it only owns `wsl.exe`), so the plugin starts each WSL shell with a `TABBY_WORKSPACES_TAB` id (passed in via `WSLENV`) and, when saving, reads that shell's cwd from `/proc` with one `wsl.exe` call per distro. For tmux pins this is the folder tmux was attached from; tmux keeps its own panes' folders.
-- On startup the launcher replaces the terminal Tabby normally opens. Turn off **Show on startup** (bottom right of the launcher, or Settings → Workspaces) to get Tabby's usual startup back; the start page entries and **Workspaces: Show launcher** still work. Explicit command-line launches (`tabby run …`, `tabby open …`) and Tabby's first-run welcome screen are not affected. Opening a tab any other way (e.g. a hotkey) also closes the launcher.
-- Unpinned tabs live until you close the window, just like in Chrome.
-- Unpinning a tab keeps it open, but it won't come back next time.
-- A workspace can be open in only one window. Picking it again brings its existing window to the front. Each window claims its workspace with a Web Lock that it holds until it closes (or crashes), so this holds even when two windows try to open the same workspace at the same moment.
-- The window title starts with `[workspace name]`. On macOS, which has one Dock icon per app, that's what tells windows apart (Window menu, Dock menu, Mission Control).
-- While the plugin is installed, Tabby's built-in "Restore terminal tabs on app start" does nothing, because it only supports one window. Your setting is left alone and works again if you remove the plugin.
-- **tmux** (WSL tabs only, off by default): the tab attaches to `tabby-<workspace>-<pin>`. The session survives closing the window. Unpinning the tab and then closing it, or switching tmux off, kills the session. WSL may shut the distro down after all its terminals are closed, and that also ends tmux. Set `instanceIdleTimeout`/`vmIdleTimeout` in `.wslconfig` if that happens.
-- **Export** writes a JSON file containing every workspace and its pins. This includes the connection profiles of the pinned tabs, so treat the file as private.
+[MIT](LICENSE)
