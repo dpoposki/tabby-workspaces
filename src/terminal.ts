@@ -11,12 +11,15 @@ export function getTerminal (tab: BaseTabComponent): any | null {
     return anyTab
 }
 
-/** Resolves once the tab's terminal has a running session, or null after a timeout. */
+/**
+ * Resolves once the tab's terminal has an open session (for SSH: connected and logged in),
+ * or null after a timeout.
+ */
 export async function waitForSession (tab: BaseTabComponent, timeoutMs = 15_000): Promise<any | null> {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
         const terminal = getTerminal(tab)
-        if (terminal?.session?.output$) {
+        if (terminal?.session?.output$ && terminal.session.open) {
             return terminal
         }
         await sleep(100)

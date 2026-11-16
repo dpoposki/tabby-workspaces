@@ -47,8 +47,8 @@ import { START_PAGE_COUNT_MAX, START_PAGE_COUNT_MIN } from './config'
 
         <div class="form-line">
             <div class="header">
-                <div class="title">tmux for new WSL pins</div>
-                <div class="description">New pins of WSL tabs get a persistent tmux session, which starts the next time the workspace opens. You can still switch it per pin: right-click the tab → Pinned tab</div>
+                <div class="title">tmux for new pins</div>
+                <div class="description">New pins of WSL, SSH and macOS/Linux shell tabs get a persistent tmux session, which starts the next time the workspace opens. You can still switch it per pin: right-click the tab → Pinned tab</div>
             </div>
             <toggle [(ngModel)]="config.store.workspaces.tmuxByDefault" (ngModelChange)="config.save()"></toggle>
         </div>

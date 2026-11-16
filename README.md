@@ -10,7 +10,8 @@ Chrome-style workspaces for the [Tabby](https://tabby.sh) terminal. Each workspa
 - **[One window per workspace](#one-window-per-workspace)**: a colored badge, stripe and window title show which workspace a window belongs to
 - **[Pinned tabs that come back](#pinned-tabs)**: named, with their profile, working directory and an optional startup command
 - **[WSL working directory](#wsl-working-directory)**: WSL tabs reopen in the folder you `cd`'d to, without any shell setup
-- **[Persistent tmux sessions](#persistent-tmux-sessions)**: a WSL pin can attach to a tmux session that survives closing the window
+- **[Persistent tmux sessions](#persistent-tmux-sessions)**: a WSL, SSH or macOS/Linux pin can attach to a tmux session that survives closing the window
+- **[SSH and serial pins](#ssh-and-serial-pins)**: they reconnect when the workspace opens, and run their startup command once logged in
 - **[Workspaces on the start page](#start-page)**: empty windows list your recent workspaces
 - **[Own taskbar icon per workspace](#taskbar-icons)**: on Windows, each workspace gets its own taskbar button
 - **[Settings page, export and import](#settings)**
@@ -53,7 +54,7 @@ Right-click a tab and choose **Pin**, or use the `pin-tab` hotkey. You're asked 
 Right-click a pinned tab and open **Pinned tab** to:
 - rename the pin
 - set a **startup command**, which runs each time the tab is restored
-- turn on a **persistent tmux session** (WSL tabs only)
+- turn on a **persistent tmux session** (WSL, SSH, and shells on macOS and Linux)
 
 ![Pinned tab menu](docs/screenshots/pin-menu.png)
 
@@ -65,11 +66,19 @@ Tabby can't see where a WSL shell has `cd`'d, because it only controls `wsl.exe`
 
 ### Persistent tmux sessions
 
-This is for WSL tabs only and is off by default (turn on **tmux for new WSL pins** in Settings → Workspaces to make it the default). When it's on, the pin attaches to a tmux session named `tabby-<workspace>-<pin>`. That session keeps running when you close the window, so your programs and scrollback are still there when you reopen the workspace. tmux keeps track of its own panes' folders.
+This works for WSL tabs, SSH tabs, and local shells (bash, zsh, fish, …) on macOS and Linux. It's off by default; turn on **tmux for new pins** in Settings → Workspaces to make it the default. When it's on, the pin attaches to a tmux session named `tabby-<workspace>-<pin>`. That session keeps running when you close the window, so your programs and scrollback are still there when you reopen the workspace. tmux keeps track of its own panes' folders. For an SSH pin the session runs on the server, so it also survives the connection dropping.
 
-Switching tmux off, or unpinning the tab and then closing it, ends the session.
+tmux has to be installed where the shell runs: in the distro, on the server, or on your Mac (for example `brew install tmux`). The plugin types the tmux command into the tab's shell, so the shell's own `PATH` finds it.
+
+Switching tmux off, or unpinning the tab and then closing it, ends the session. For SSH, the plugin ends it over the same connection, in a separate channel.
 
 WSL may shut a distro down once all its terminals are closed, and that ends tmux too. If that happens, set `instanceIdleTimeout`/`vmIdleTimeout` in `.wslconfig`.
+
+### SSH and serial pins
+
+SSH, serial and telnet tabs can be pinned like local ones. When the workspace opens they connect again, and the startup command (or tmux) is typed in once the connection is up and the prompt shows. For SSH, the plugin waits up to two minutes for you to log in.
+
+An SSH pin reopens in the folder the remote shell last reported. Tabby only knows that folder if the shell reports it (the OSC 1337 `CurrentDir` sequence). If it doesn't, use tmux, which keeps the folder on the server.
 
 ### Start page
 
@@ -95,7 +104,7 @@ macOS has only one Dock icon per app, so the `[workspace name]` in the window ti
 | Open the last workspace | Skip the launcher and reopen the workspace you used last (the launcher still shows if it's already open in another window) |
 | List workspaces on the start page | Recent workspaces on an empty window's start page |
 | Workspaces on the start page | How many it lists, 1–20 (default 8) |
-| tmux for new WSL pins | New WSL pins get a persistent tmux session, starting the next time the workspace opens |
+| tmux for new pins | New WSL, SSH and macOS/Linux shell pins get a persistent tmux session, starting the next time the workspace opens |
 | Toolbar badge | The colored badge in the tab bar (applies to new windows) |
 | Color stripe | The workspace-colored line across the top of the window |
 | Taskbar icon | Per-workspace icon and, on Windows, its own taskbar button |

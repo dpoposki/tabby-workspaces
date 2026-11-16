@@ -11,7 +11,7 @@ export interface WorkspacesSettings {
     startPageList: boolean
     /** How many workspaces the start page lists */
     startPageCount: number
-    /** New pins of WSL tabs get a persistent tmux session */
+    /** New pins get a persistent tmux session, where the tab supports it (WSL, SSH, macOS/Linux shells) */
     tmuxByDefault: boolean
     /** Workspace badge in the tab bar (read once per window) */
     toolbarBadge: boolean

@@ -6,7 +6,7 @@ import {
 import { WorkspacesService } from './workspaces.service'
 import { WorkspaceSession } from './session'
 import { WorkspaceDialogs } from './dialogs'
-import { isWslTab } from './wsl'
+import { pinKindOfTab } from './pins'
 import { WorkspacesLauncher } from './launcher'
 import { ErrorReporter } from './errors'
 import { HOTKEY_LAUNCHER, startPageCount, workspacesSettings } from './config'
@@ -26,7 +26,7 @@ export class WorkspacesTabContextMenu extends TabContextMenuItemProvider {
             return []
         }
         const meta = this.session.getMeta(tab)
-        const wsl = isWslTab(tab)
+        const tmux = pinKindOfTab(tab).tmux
         return [
             { type: 'separator' },
             {
@@ -42,10 +42,10 @@ export class WorkspacesTabContextMenu extends TabContextMenuItemProvider {
                         click: () => this.dialogs.editStartupCommand(tab),
                     },
                     {
-                        label: wsl ? 'Persistent tmux session' : 'Persistent tmux session (WSL tabs only)',
+                        label: tmux ? 'Persistent tmux session' : 'Persistent tmux session (not for this kind of tab)',
                         type: 'checkbox',
                         checked: !!meta.tmux,
-                        enabled: wsl,
+                        enabled: tmux,
                         click: () => this.dialogs.setTmux(tab, !meta.tmux),
                     },
                 ],

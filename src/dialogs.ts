@@ -6,8 +6,8 @@ import { WorkspaceStore } from './store'
 import { WorkspacesService } from './workspaces.service'
 import { WorkspaceSession } from './session'
 import { getTerminal } from './terminal'
-import { getWslTarget } from './wsl'
-import { buildTmuxCommand, killTmuxSession, tmuxSessionName } from './tmux'
+import { buildTmuxCommand, tmuxSessionName } from './tmux'
+import { pinKindOf } from './pins'
 
 /**
  * The questions the plugin asks (names, colors, confirmations), for the launcher's card
@@ -87,8 +87,8 @@ export class WorkspaceDialogs {
         const workspace = this.session.current
         const meta = this.session.getMeta(tab)
         const terminal = getTerminal(tab)
-        const target = getWslTarget(terminal)
-        if (!workspace || !target) {
+        const kind = pinKindOf(terminal)
+        if (!workspace || !kind.tmux) {
             return
         }
         const name = tmuxSessionName(workspace.id, meta.id)
@@ -119,7 +119,7 @@ export class WorkspaceDialogs {
                 return
             }
             meta.tmux = false
-            killTmuxSession(target, name)
+            kind.killTmuxSession(terminal, name)
             this.session.scheduleSave()
         }
     }

@@ -5,10 +5,12 @@ import { newId, PinMeta, PinRecord, plural, Workspace } from './models'
 import { WorkspaceStore } from './store'
 import { ErrorReporter } from './errors'
 import type { TabbyHooks } from './tabby-compat'
-import { getTerminal, waitForPrompt, waitForSession } from './terminal'
-import { getWslTarget, isWslTab, lookupWslCwds, normalizeWslCwd, stripWslTagFromEnv } from './wsl'
+import { getTerminal } from './terminal'
+import { getWslTarget, lookupWslCwds } from './wsl'
+import { prepareToken, reportedCwd } from './tokens'
 import { workspacesSettings } from './config'
-import { buildTmuxCommand, killTmuxSession, tmuxSessionName } from './tmux'
+import { buildTmuxCommand, tmuxSessionName } from './tmux'
+import { pinKindOf, pinKindOfTab } from './pins'
 
 const SAVE_DEBOUNCE_MS = 800
 /** Periodic save so working directories stay fresh */
@@ -26,6 +28,8 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
     readonly attached$ = new Subject<Workspace>()
 
     private meta = new WeakMap<BaseTabComponent, PinMeta>()
+    /** Each tab's terminal pane as last seen; a closing split tab may already have lost it */
+    private terminals = new WeakMap<BaseTabComponent, any>()
     /** Pins that could not be restored (e.g. their profile is gone); kept so they aren't silently lost */
     private unrestorable: PinRecord[] = []
     private restoring = false
@@ -135,17 +139,21 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
         }
     }
 
-    /** Types the pin's tmux attach and/or startup command into a freshly restored tab. */
+    /**
+     * Types the pin's tmux attach and/or startup command into a freshly restored tab, once
+     * it shows a prompt (for SSH: after connecting and logging in).
+     */
     private async runStartup (workspace: Workspace, tab: BaseTabComponent, meta: PinMeta): Promise<void> {
         if (!meta.startupCommand && !meta.tmux) {
             return
         }
-        const terminal = await waitForSession(tab)
-        if (!terminal) {
+        const kind = pinKindOfTab(tab)
+        const terminal = await kind.waitUntilReady(tab)
+        if (!terminal || !this.app.tabs.includes(tab)) {
             return
         }
-        await waitForPrompt(terminal.session)
-        const command = meta.tmux && getWslTarget(terminal)
+        this.terminals.set(tab, terminal)
+        const command = meta.tmux && kind.tmux
             ? buildTmuxCommand(tmuxSessionName(workspace.id, meta.id), meta.startupCommand)
             : meta.startupCommand
         if (command) {
@@ -173,7 +181,7 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
             const meta = this.getMeta(tab)
             // tmux by default starts with the next opening of the workspace: typing into
             // the tab now could land in a program that's running there
-            if (workspacesSettings(this.config).tmuxByDefault && isWslTab(tab)) {
+            if (workspacesSettings(this.config).tmuxByDefault && pinKindOfTab(tab).tmux) {
                 meta.tmux = true
             }
             setTimeout(() => this.app.renameTab(tab))
@@ -211,9 +219,10 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
         if (!meta?.tmux || !this.current || (this.closing && tab.pinned)) {
             return
         }
-        const target = getWslTarget(getTerminal(tab))
-        if (target) {
-            killTmuxSession(target, tmuxSessionName(this.current.id, meta.id))
+        const terminal = getTerminal(tab) ?? this.terminals.get(tab)
+        const kind = pinKindOf(terminal)
+        if (kind.tmux) {
+            kind.killTmuxSession(terminal, tmuxSessionName(this.current.id, meta.id))
         }
     }
 
@@ -289,7 +298,12 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
             const token = await this.tabRecovery.getFullRecoveryToken(tab, { includeState: false })
             if (token) {
                 const terminal = getTerminal(tab)
-                prepareToken(token, getWslTarget(terminal), wslCwds.get(terminal))
+                this.terminals.set(tab, terminal)
+                prepareToken(token, {
+                    wslTarget: getWslTarget(terminal),
+                    wslCwd: wslCwds.get(terminal),
+                    reportedCwd: pinKindOf(terminal).name === 'ssh' ? await reportedCwd(terminal) : null,
+                })
                 pins.push({ ...this.getMeta(tab), token })
             }
         }
@@ -299,44 +313,4 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
         }
         this.store.setPins(workspace.id, [...pins, ...this.unrestorable])
     }
-}
-
-/**
- * Makes a recovery token fit for storing as a pin: marked pinned, without this plugin's
- * WSL tab id, and with the WSL working directory as a \\wsl.localhost\... path.
- */
-function prepareToken (token: any, wslTarget: { args: string[] } | null, wslCwd: string | undefined): void {
-    token.tabPinned = true
-    const options = terminalTokenOf(token)?.profile?.options
-    if (!options) {
-        return
-    }
-    if (options.env) {
-        options.env = stripWslTagFromEnv(options.env)
-    }
-    if (wslCwd) {
-        options.cwd = wslCwd
-    } else {
-        normalizeWslCwd(options, wslTarget)
-    }
-}
-
-/**
- * A top-level tab's token is a split container ({ type: 'app:split-tab', children: [...] });
- * the terminal's own token (with the profile and cwd) is its first leaf, matching getTerminal().
- */
-function terminalTokenOf (token: any): any | null {
-    if (!token) {
-        return null
-    }
-    if (token.profile) {
-        return token
-    }
-    for (const child of token.children ?? []) {
-        const leaf = terminalTokenOf(child)
-        if (leaf) {
-            return leaf
-        }
-    }
-    return null
 }

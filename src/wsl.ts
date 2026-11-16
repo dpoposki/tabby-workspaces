@@ -1,7 +1,6 @@
 import { execFile } from 'child_process'
-import { BaseTabComponent } from 'tabby-core'
 import { TerminalTabComponent } from 'tabby-local'
-import { getTerminal } from './terminal'
+import { tmuxKillArgs } from './tmux'
 
 /** Everything specific to WSL tabs on Windows; nothing here runs for other shells. */
 
@@ -23,12 +22,13 @@ export function getWslTarget (terminal: any): { command: string, args: string[] 
     }
 }
 
-export function isWslTab (tab: BaseTabComponent): boolean {
-    return !!getWslTarget(getTerminal(tab))
+export function isWslCommand (command?: string | null): command is string {
+    return !!command && /(^|[\\/])wsl(\.exe)?$/i.test(command)
 }
 
-function isWslCommand (command?: string | null): command is string {
-    return !!command && /(^|[\\/])wsl(\.exe)?$/i.test(command)
+/** Ends a tmux session inside the tab's distro */
+export function killWslTmuxSession (target: { command: string, args: string[] }, name: string): void {
+    execFile(target.command, [...target.args, '--', ...tmuxKillArgs(name)], { windowsHide: true }, () => null)
 }
 
 /*
