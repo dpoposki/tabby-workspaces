@@ -9,6 +9,7 @@ import {
 } from './providers'
 import { HOTKEY_LAUNCHER, WorkspacesConfigProvider } from './config'
 import { WorkspacesLauncher } from './launcher'
+import { TabbyCompat } from './tabby-compat'
 import { SettingsTabProvider } from 'tabby-settings'
 import { WorkspacesSettingsTabComponent, WorkspacesSettingsTabProvider } from './settings'
 
@@ -35,7 +36,8 @@ export default class WorkspacesModule {
         // This runs while Tabby bootstraps: a failure here must not take Tabby down with it
         try {
             workspaces.init()
-            putFirst(commandProviders, x => x instanceof WorkspacesCommandProvider)
+            // Start page order: "New terminal", the workspaces, then "Profiles & connections"
+            TabbyCompat.putFirst(commandProviders, x => x instanceof WorkspacesCommandProvider)
         } catch (error) {
             errors.report('Workspaces plugin failed to start', error)
             return
@@ -45,19 +47,5 @@ export default class WorkspacesModule {
                 launcher.show()
             }
         })
-    }
-}
-
-/**
- * Start page order is "New terminal", the workspaces, then "Profiles & connections".
- * Built-in start page entries all have weight 0 and the sort is stable, so the order
- * among them is toolbar buttons ("New terminal") first, then command providers in
- * registration order. Moving this provider ahead of tabby-core's (the multi-provider
- * array is the one CommandService holds) puts the workspaces right after "New terminal".
- */
-function putFirst<T> (array: T[], predicate: (item: T) => boolean): void {
-    const index = array.findIndex(predicate)
-    if (index > 0) {
-        array.unshift(...array.splice(index, 1))
     }
 }

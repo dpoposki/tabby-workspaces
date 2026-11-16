@@ -1,7 +1,7 @@
 import { Component, Injectable } from '@angular/core'
 import { ConfigService, HostAppService } from 'tabby-core'
 import { SettingsTabProvider } from 'tabby-settings'
-import { WorkspacesService } from './workspaces.service'
+import { WorkspacesBackup } from './backup'
 import { ErrorReporter } from './errors'
 import { TaskbarIdentity } from './taskbar'
 
@@ -77,13 +77,13 @@ export class WorkspacesSettingsTabComponent {
     /** Not on macOS, where windows are told apart by their title */
     taskbarSupported: boolean
 
-    exportWorkspaces = () => this.workspaces.exportWorkspaces()
-    importWorkspaces = () => this.workspaces.importWorkspaces()
+    exportWorkspaces = () => this.backup.exportWorkspaces()
+    importWorkspaces = () => this.backup.importWorkspaces()
 
     constructor (
         public config: ConfigService,
         public errors: ErrorReporter,
-        private workspaces: WorkspacesService,
+        private backup: WorkspacesBackup,
         hostApp: HostAppService,
     ) {
         this.taskbarSupported = TaskbarIdentity.isSupported(hostApp.platform)

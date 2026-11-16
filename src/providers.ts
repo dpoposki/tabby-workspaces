@@ -4,7 +4,9 @@ import {
     ConfigService, HotkeyDescription, HotkeyProvider, MenuItemOptions, TabContextMenuItemProvider,
 } from 'tabby-core'
 import { WorkspacesService } from './workspaces.service'
-import { isWslTab } from './terminal'
+import { WorkspaceSession } from './session'
+import { WorkspaceDialogs } from './dialogs'
+import { isWslTab } from './wsl'
 import { WorkspacesLauncher } from './launcher'
 import { ErrorReporter } from './errors'
 import { HOTKEY_LAUNCHER, workspacesSettings } from './config'
@@ -15,15 +17,15 @@ import { initialOf, safeColor } from './models'
 export class WorkspacesTabContextMenu extends TabContextMenuItemProvider {
     weight = 5
 
-    constructor (private app: AppService, private workspaces: WorkspacesService) {
+    constructor (private app: AppService, private session: WorkspaceSession, private dialogs: WorkspaceDialogs) {
         super()
     }
 
     async getItems (tab: BaseTabComponent, tabHeader?: boolean): Promise<MenuItemOptions[]> {
-        if (!tabHeader || !this.workspaces.current || !tab.pinned || !this.app.tabs.includes(tab)) {
+        if (!tabHeader || !this.session.current || !tab.pinned || !this.app.tabs.includes(tab)) {
             return []
         }
-        const meta = this.workspaces.getMeta(tab)
+        const meta = this.session.getMeta(tab)
         const wsl = isWslTab(tab)
         return [
             { type: 'separator' },
@@ -37,14 +39,14 @@ export class WorkspacesTabContextMenu extends TabContextMenuItemProvider {
                     {
                         label: 'Startup command…',
                         sublabel: meta.startupCommand,
-                        click: () => this.workspaces.editStartupCommand(tab),
+                        click: () => this.dialogs.editStartupCommand(tab),
                     },
                     {
                         label: wsl ? 'Persistent tmux session' : 'Persistent tmux session (WSL tabs only)',
                         type: 'checkbox',
                         checked: !!meta.tmux,
                         enabled: wsl,
-                        click: () => this.workspaces.setTmux(tab, !meta.tmux),
+                        click: () => this.dialogs.setTmux(tab, !meta.tmux),
                     },
                 ],
             },
@@ -57,6 +59,7 @@ export class WorkspacesTabContextMenu extends TabContextMenuItemProvider {
 export class WorkspacesCommandProvider extends CommandProvider {
     constructor (
         private workspaces: WorkspacesService,
+        private session: WorkspaceSession,
         private launcher: WorkspacesLauncher,
         private config: ConfigService,
         private errors: ErrorReporter,
@@ -69,10 +72,11 @@ export class WorkspacesCommandProvider extends CommandProvider {
         // global serialization queue each time, and wrapping the same object twice
         // deadlocks that queue (freezing every toolbar button and command).
         const service = this.workspaces
+        const session = this.session
         // Toolbar buttons are collected once per window, so label and icon are live getters
         const badge = Object.defineProperties(new Command(), {
-            label: { get: () => service.current ? `Workspace: ${service.current.name}` : 'Workspaces' },
-            icon: { get: () => badgeIcon(service.current?.name, service.current?.color) },
+            label: { get: () => session.current ? `Workspace: ${session.current.name}` : 'Workspaces' },
+            icon: { get: () => badgeIcon(session.current?.name, session.current?.color) },
         })
         badge.id = 'workspaces:menu'
         badge.locations = [CommandLocation.RightToolbar]
@@ -88,7 +92,7 @@ export class WorkspacesCommandProvider extends CommandProvider {
         // Start page of a window without a workspace: one entry per recent workspace
         // (like Chrome's profile picker), then "All workspaces…" for the launcher
         const settings = workspacesSettings(this.config)
-        const recent = service.current || !settings.startPageList ? [] : service.sortedWorkspaces().slice(0, START_PAGE_MAX_WORKSPACES)
+        const recent = session.current || !settings.startPageList ? [] : service.sortedWorkspaces().slice(0, START_PAGE_MAX_WORKSPACES)
         const entries = recent.map(workspace => {
             const entry = new Command()
             entry.id = `workspaces:start-page:${workspace.id}`

@@ -1,6 +1,8 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { HostAppService, HostWindowService, Platform, PlatformService } from 'tabby-core'
+import { Injectable } from '@angular/core'
+import { HostAppService, Platform, PlatformService } from 'tabby-core'
+import { TabbyCompat } from './tabby-compat'
 import { initialOf, safeColor, Workspace } from './models'
 
 /*
@@ -16,13 +18,14 @@ import { initialOf, safeColor, Workspace } from './models'
 
 const SIZES = [16, 20, 24, 32, 40, 48, 64, 256]
 
+@Injectable({ providedIn: 'root' })
 export class TaskbarIdentity {
     private applied: string | null = null
     private logo: Promise<HTMLImageElement | null> | null = null
 
     constructor (
         private hostApp: HostAppService,
-        private hostWindow: HostWindowService,
+        private compat: TabbyCompat,
         private platform: PlatformService,
     ) { }
 
@@ -42,7 +45,7 @@ export class TaskbarIdentity {
         if (this.applied === key) {
             return
         }
-        const window = (this.hostWindow as any).getWindow?.()
+        const window = this.compat.getNativeWindow()
         const dir = this.iconDirectory()
         if (!window || !dir) {
             return

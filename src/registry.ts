@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core'
 import { Subject } from 'rxjs'
+import { WorkspaceSession } from './session'
 
 type Message =
     | { type: 'query', nonce: string }
@@ -12,15 +13,13 @@ type Message =
  */
 @Injectable({ providedIn: 'root' })
 export class WindowRegistry {
-    /** Workspace shown in this window */
-    currentId: string | null = null
     /** Fires (outside the Angular zone) when another window asks this one to focus */
     readonly focusRequested$ = new Subject<void>()
 
     private channel = new BroadcastChannel('tabby-workspaces')
     private pendingQueries = new Map<string, Set<string>>()
 
-    constructor () {
+    constructor (private session: WorkspaceSession) {
         this.channel.onmessage = event => this.onMessage(event.data as Message)
     }
 
@@ -40,11 +39,11 @@ export class WindowRegistry {
     }
 
     private onMessage (msg: Message): void {
-        if (msg.type === 'query' && this.currentId) {
-            this.post({ type: 'present', nonce: msg.nonce, id: this.currentId })
+        if (msg.type === 'query' && this.session.current) {
+            this.post({ type: 'present', nonce: msg.nonce, id: this.session.current.id })
         } else if (msg.type === 'present') {
             this.pendingQueries.get(msg.nonce)?.add(msg.id)
-        } else if (msg.type === 'focus' && msg.id === this.currentId) {
+        } else if (msg.type === 'focus' && msg.id === this.session.current?.id) {
             this.focusRequested$.next()
         }
     }

@@ -5,6 +5,8 @@ import { initialOf, NAME_MAX_LENGTH, plural, safeColor, Workspace, WORKSPACE_COL
 import { WorkspaceStore } from './store'
 import { WindowRegistry } from './registry'
 import { WorkspacesService } from './workspaces.service'
+import { WorkspaceSession } from './session'
+import { WorkspaceDialogs } from './dialogs'
 import { ErrorReporter } from './errors'
 import { workspacesSettings } from './config'
 
@@ -39,6 +41,8 @@ export class WorkspacesLauncher {
         private platform: PlatformService,
         private registry: WindowRegistry,
         private service: WorkspacesService,
+        private session: WorkspaceSession,
+        private dialogs: WorkspaceDialogs,
         private store: WorkspaceStore,
         private zone: NgZone,
         private errors: ErrorReporter,
@@ -55,7 +59,7 @@ export class WorkspacesLauncher {
         if (!this.subscribed) {
             this.subscribed = true
             // Anything that fills this window (a workspace, a hotkey-opened tab) dismisses the launcher
-            this.service.attached$.subscribe(() => this.hide())
+            this.session.attached$.subscribe(() => this.hide())
             this.app.tabsChanged$.subscribe(() => this.app.tabs.length && this.hide())
             // Renamed, recolored, added or deleted in another window: never show stale cards
             this.store.listChangedElsewhere$.subscribe(() => this.zone.run(() => this.refresh()))
@@ -95,7 +99,7 @@ export class WorkspacesLauncher {
     private guest (): void {
         this.hide()
         this.run(async () => {
-            if (this.service.current || this.app.tabs.length) {
+            if (this.session.current || this.app.tabs.length) {
                 this.hostApp.newWindow()
             } else {
                 await this.injector.get(TerminalService).openTab()
@@ -112,20 +116,20 @@ export class WorkspacesLauncher {
 
     /** Chrome-like "⋯" on a card: edit or delete that workspace without leaving the launcher */
     private async showCardMenu (workspace: Workspace, event: MouseEvent): Promise<void> {
-        const deletable = await this.service.canDelete(workspace)
+        const deletable = await this.service.canDelete(workspace.id)
         const edit = (action: () => Promise<boolean>) => () => this.run(async () => {
             if (await action()) {
                 this.refresh()
             }
         })
         const items: MenuItemOptions[] = [
-            { label: 'Rename…', click: edit(() => this.service.renameWorkspace(workspace)) },
-            { label: 'Change color…', click: edit(() => this.service.changeColor(workspace)) },
+            { label: 'Rename…', click: edit(() => this.dialogs.rename(workspace)) },
+            { label: 'Change color…', click: edit(() => this.dialogs.changeColor(workspace)) },
             { type: 'separator' },
             {
                 label: deletable ? 'Delete…' : 'Delete… (close its window first)',
                 enabled: deletable,
-                click: edit(() => this.service.deleteWorkspace(workspace)),
+                click: edit(() => this.dialogs.delete(workspace)),
             },
         ]
         this.platform.popupContextMenu(items, event)
@@ -154,7 +158,7 @@ export class WorkspacesLauncher {
         root.addEventListener('keydown', event => this.onKeyDown(event))
 
         root.appendChild(el('div', 'wl-drag'))
-        if (this.service.current || this.app.tabs.length) {
+        if (this.session.current || this.app.tabs.length) {
             // Opened over a window that has content: make the way back obvious
             const close = el('button', 'wl-close') as HTMLButtonElement
             close.innerHTML = CLOSE_ICON
@@ -223,7 +227,7 @@ export class WorkspacesLauncher {
         card.addEventListener('contextmenu', menu)
         card.appendChild(el('span', 'wl-avatar', initialOf(workspace.name)))
         card.appendChild(el('span', 'wl-name', workspace.name))
-        const isCurrent = workspace.id === this.service.current?.id
+        const isCurrent = workspace.id === this.session.current?.id
         card.classList.toggle('wl-current', isCurrent)
         const meta = isCurrent
             ? 'This window'
@@ -325,7 +329,7 @@ export class WorkspacesLauncher {
     private async markOpenElsewhere (): Promise<void> {
         const open = await this.registry.openElsewhere()
         for (const id of open) {
-            if (id === this.service.current?.id) {
+            if (id === this.session.current?.id) {
                 continue
             }
             const card = this.grid?.querySelector<HTMLElement>(`.wl-card[data-id="${CSS.escape(id)}"]`)
