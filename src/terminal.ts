@@ -107,12 +107,34 @@ export function tagWslShells (): void {
         try {
             return original.apply(this, args)
         } finally {
-            if (this.profile === tagged) {
-                this.profile = profile
-            }
+            // "Run as administrator" replaces the profile with a patched copy of the tagged one
+            this.profile = this.profile === tagged ? profile : withoutWslTag(this.profile)
             tags.set(this, tag)
         }
     }
+}
+
+/** A copy of the profile with this plugin's tab id removed from its environment. */
+function withoutWslTag (profile: any): any {
+    const options = profile?.options
+    if (!options?.env?.[TAG_VAR]) {
+        return profile
+    }
+    return { ...profile, options: { ...options, env: stripWslTagFromEnv(options.env) } }
+}
+
+/** Removes the tab id (and its WSLENV entry) from an env object; used on saved tokens too. */
+export function stripWslTagFromEnv (env: Record<string, string>): Record<string, string> {
+    const { [TAG_VAR]: _tag, ...rest } = env
+    if (rest.WSLENV !== undefined) {
+        const wslenv = rest.WSLENV.split(':').filter(x => x && x.split('/')[0] !== TAG_VAR).join(':')
+        if (wslenv) {
+            rest.WSLENV = wslenv
+        } else {
+            delete rest.WSLENV
+        }
+    }
+    return rest
 }
 
 /*

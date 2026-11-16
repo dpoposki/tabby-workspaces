@@ -1,7 +1,9 @@
 import { Component, Injectable } from '@angular/core'
-import { ConfigService, HostAppService, Platform } from 'tabby-core'
+import { ConfigService, HostAppService } from 'tabby-core'
 import { SettingsTabProvider } from 'tabby-settings'
 import { WorkspacesService } from './workspaces.service'
+import { ErrorReporter } from './errors'
+import { TaskbarIdentity } from './taskbar'
 
 /** Settings → Workspaces */
 @Component({
@@ -27,7 +29,7 @@ import { WorkspacesService } from './workspaces.service'
         <div class="form-line">
             <div class="header">
                 <div class="title">Toolbar badge</div>
-                <div class="description">Workspace color and initial in the top right; click it for the workspace menu. Applies to new windows</div>
+                <div class="description">Workspace color and initial in the top right; click it to switch, add or edit workspaces. Applies to new windows</div>
             </div>
             <toggle [(ngModel)]="config.store.workspaces.toolbarBadge" (ngModelChange)="config.save()"></toggle>
         </div>
@@ -54,10 +56,10 @@ import { WorkspacesService } from './workspaces.service'
                 <div class="description">All workspaces with their pinned tabs, as a JSON file</div>
             </div>
             <div class="d-flex gap-2">
-                <button class="btn btn-secondary" (click)="workspaces.exportWorkspaces()">
+                <button class="btn btn-secondary" (click)="errors.run('Export failed', exportWorkspaces)">
                     <i class="fas fa-file-export me-2"></i>Export…
                 </button>
-                <button class="btn btn-secondary" (click)="workspaces.importWorkspaces()">
+                <button class="btn btn-secondary" (click)="errors.run('Import failed', importWorkspaces)">
                     <i class="fas fa-file-import me-2"></i>Import…
                 </button>
             </div>
@@ -66,17 +68,25 @@ import { WorkspacesService } from './workspaces.service'
         <div class="form-line">
             <div class="header">
                 <div class="title">Hotkeys</div>
-                <div class="description">"Workspaces: open another workspace" and "Workspaces: menu" are under Settings → Hotkeys</div>
+                <div class="description">"Workspaces: show launcher" is under Settings → Hotkeys</div>
             </div>
         </div>
     `,
 })
 export class WorkspacesSettingsTabComponent {
-    /** macOS has one Dock icon per app; windows are told apart by their title there */
+    /** Not on macOS, where windows are told apart by their title */
     taskbarSupported: boolean
 
-    constructor (public config: ConfigService, public workspaces: WorkspacesService, hostApp: HostAppService) {
-        this.taskbarSupported = hostApp.platform !== Platform.macOS
+    exportWorkspaces = () => this.workspaces.exportWorkspaces()
+    importWorkspaces = () => this.workspaces.importWorkspaces()
+
+    constructor (
+        public config: ConfigService,
+        public errors: ErrorReporter,
+        private workspaces: WorkspacesService,
+        hostApp: HostAppService,
+    ) {
+        this.taskbarSupported = TaskbarIdentity.isSupported(hostApp.platform)
     }
 }
 

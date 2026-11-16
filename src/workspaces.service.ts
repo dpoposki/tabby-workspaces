@@ -3,21 +3,29 @@ import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
 import { Subject } from 'rxjs'
 import {
     AppService, BaseTabComponent, ConfigService, HostAppService, HostWindowService,
-    NotificationsService, PlatformService, PromptModalComponent, SelectorOption,
+    NotificationsService, PlatformService, PromptModalComponent,
     SelectorService, TabRecoveryService,
 } from 'tabby-core'
-import { ExportFile, newId, PinMeta, PinRecord, Workspace, WORKSPACE_COLORS } from './models'
-import { LIST_KEY, WorkspaceStore } from './store'
+import { EXPORT_FORMAT, ExportFile, newId, PinMeta, PinRecord, plural, Workspace, WORKSPACE_COLORS } from './models'
+import { workspacesSettings } from './config'
+import { WorkspaceStore } from './store'
+import { ErrorReporter } from './errors'
+import { patchMethod } from './patch'
 import { WindowRegistry } from './registry'
 import { TaskbarIdentity } from './taskbar'
 import {
-    buildTmuxCommand, getTerminal, getWslTarget, killTmuxSession, lookupWslCwds,
+    buildTmuxCommand, getTerminal, getWslTarget, killTmuxSession, lookupWslCwds, stripWslTagFromEnv,
     tagWslShells, tmuxSessionName, waitForPrompt, waitForSession, wslUncPath,
 } from './terminal'
 
 const SAVE_DEBOUNCE_MS = 800
 /** Periodic save so working directories stay fresh */
 const SAVE_INTERVAL_MS = 10_000
+/** Set once the plugin has given back Tabby's "restore tabs" setting, which older versions switched off */
+/** Lets Tabby finish its own startup before a handed-off workspace is restored */
+const STARTUP_DELAY_MS = 300
+const STRIPE_HEIGHT_PX = 3
+const RECOVER_TABS_RESTORED_KEY = 'tabbyWorkspaces.recoverTabsRestored'
 
 @Injectable({ providedIn: 'root' })
 export class WorkspacesService {
@@ -49,6 +57,7 @@ export class WorkspacesService {
         private store: WorkspaceStore,
         private registry: WindowRegistry,
         private zone: NgZone,
+        private errors: ErrorReporter,
     ) {
         this.taskbar = new TaskbarIdentity(hostApp, hostWindow, platform)
     }
@@ -59,9 +68,19 @@ export class WorkspacesService {
         }
         this.initialized = true
 
-        tagWslShells()
-        this.patchAppService()
-        this.patchWindowTitle()
+        // Each patch is independent: if a Tabby update removes what one relies on, only that feature stops
+        const failed = [
+            ['WSL working directories', () => tagWslShells()],
+            ['saving pins', () => this.patchAppService()],
+            ['window titles', () => this.patchWindowTitle()],
+            ['multi-window tab recovery', () => this.disableBuiltinTabRecovery()],
+        ].filter(([, install]) => !this.tryInstall(install as () => boolean)).map(([name]) => name)
+        if (failed.length) {
+            setTimeout(() => this.notifications.error(
+                'Workspaces: not fully compatible with this Tabby version',
+                `Disabled: ${failed.join(', ')}.`,
+            ), 3000)
+        }
 
         this.app.tabOpened$.subscribe(tab => this.watchTab(tab))
         this.app.tabsChanged$.subscribe(() => this.scheduleSave())
@@ -70,23 +89,31 @@ export class WorkspacesService {
         setInterval(() => this.scheduleSave(), SAVE_INTERVAL_MS)
 
         this.registry.focusRequested$.subscribe(() => this.zone.run(() => this.hostWindow.bringToFront()))
-        window.addEventListener('storage', event => {
-            if (event.key === LIST_KEY) {
-                this.zone.run(() => this.onListChangedElsewhere())
-            }
-        })
+        this.store.listChangedElsewhere$.subscribe(() => this.zone.run(() => this.onListChangedElsewhere()))
+        this.store.corrupted$.subscribe(({ key, backupKey }) => this.zone.run(() => this.notifications.error(
+            'Workspaces: stored data was unreadable',
+            `It was set aside under "${backupKey}" in Tabby's local storage (was "${key}").`,
+        )))
 
         this.app.ready$.subscribe(() => {
-            // Let Tabby finish its own startup before showing the picker
-            setTimeout(() => this.onAppReady().catch(error => console.error('[workspaces] startup failed', error)), 300)
+            setTimeout(() => this.onAppReady().catch(error => this.errors.report('Workspaces: startup failed', error)), STARTUP_DELAY_MS)
         })
     }
 
     // ---------------------------------------------------------------- startup
 
+    private tryInstall (install: () => boolean | void): boolean {
+        try {
+            return install() !== false
+        } catch (error) {
+            this.errors.log('patch failed', error)
+            return false
+        }
+    }
+
     private async onAppReady (): Promise<void> {
         await this.config.ready$.toPromise()
-        this.disableBuiltinTabRecovery()
+        this.restoreRecoverTabsSetting()
 
         const handoffId = this.store.takeHandoff()
         const handoff = handoffId ? this.store.get(handoffId) : null
@@ -96,83 +123,53 @@ export class WorkspacesService {
                 this.registry.requestFocus(handoff.id)
                 this.closeWindowIfEmpty()
             } else {
-                await this.attach(handoff)
+                await this.attach(handoff.id)
             }
         }
-        // Otherwise the window starts as a plain window; the start page entry and the
-        // toolbar badge open the picker. Showing it here would block the window while it loads.
+        // Otherwise the window starts as a plain window; the start page entries and the
+        // toolbar badge open the launcher (the first window shows it via the CLI handler).
     }
 
-    /** Tabby's own "restore tabs" only works for a single window and would fight with workspaces. */
-    private disableBuiltinTabRecovery (): void {
-        if (this.config.store.recoverTabs !== false) {
-            this.config.store.recoverTabs = false
+    /**
+     * Tabby's own "restore tabs" only knows one window and would fight with workspaces,
+     * so it's switched off while the plugin runs, without touching the user's setting
+     * (which takes effect again if the plugin is removed). Runs during bootstrap, before
+     * Tabby's config has loaded and it tries to recover anything.
+     */
+    private disableBuiltinTabRecovery (): boolean {
+        const recovery = this.tabRecovery as any
+        return patchMethod(recovery, 'recoverTabs', () => async () => [])
+            && patchMethod(recovery, 'saveTabs', () => async () => undefined)
+    }
+
+    /** Earlier versions of the plugin turned the setting off in the user's config; turn it back on once. */
+    private restoreRecoverTabsSetting (): void {
+        if (window.localStorage.getItem(RECOVER_TABS_RESTORED_KEY)) {
+            return
+        }
+        window.localStorage.setItem(RECOVER_TABS_RESTORED_KEY, '1')
+        if (this.config.store.recoverTabs === false) {
+            this.config.store.recoverTabs = true
             this.config.save()
         }
     }
 
-    // ---------------------------------------------------------------- picker & menu
+    // ---------------------------------------------------------------- workspace actions
 
     /**
-     * Picking a workspace loads it into this window if this window has none yet,
-     * and opens it in a new window otherwise.
+     * Loads the workspace into this window if it has none yet, opens it in a new window
+     * otherwise, or brings its window to the front if it's already open somewhere.
+     * `workspace` may be a stale copy (e.g. a launcher card); only its id is used.
      */
-    async showPicker (): Promise<void> {
-        const openElsewhere = await this.registry.openElsewhere()
-        const workspaces = this.sortedWorkspaces()
-        type Choice = { kind: 'workspace', workspace: Workspace } | { kind: 'manage' }
-
-        const options: SelectorOption<Choice>[] = workspaces.map(workspace => {
-            const isHere = workspace.id === this.current?.id
-            const isOpen = openElsewhere.has(workspace.id)
-            const pinCount = this.store.getPins(workspace.id).length
-            return {
-                name: workspace.name,
-                description: isHere ? 'This window' : isOpen ? 'Already open, switch to its window' : `${pinCount} pinned tab${pinCount === 1 ? '' : 's'}`,
-                color: workspace.color,
-                icon: 'fas fa-circle',
-                result: { kind: 'workspace', workspace },
-            }
-        })
-        options.push({
-            name: 'New workspace',
-            freeInputPattern: 'Create workspace "%s"',
-            icon: 'fas fa-plus',
-            callback: name => {
-                if (name?.trim()) {
-                    this.createWorkspace(name.trim()).catch(e => this.notifications.error('Could not create workspace', String(e)))
-                }
-            },
-        })
-        if (!this.current) {
-            // The badge opens this picker in a window without a workspace, so keep the menu reachable
-            options.push({
-                name: 'Manage workspaces…',
-                description: 'Delete, export, import',
-                icon: 'fas fa-cog',
-                result: { kind: 'manage' },
-            })
-        }
-
-        const title = this.current ? 'Open another workspace' : 'Open workspace (type a name to create one)'
-        let choice: Choice | undefined
-        try {
-            choice = await this.selector.show(title, options)
-        } catch {
-            return // dismissed
-        }
-        if (choice?.kind === 'manage') {
-            await this.showMenu()
-        } else if (choice?.kind === 'workspace') {
-            await this.openWorkspace(choice.workspace, openElsewhere)
-        }
-    }
-
-    async openWorkspace (workspace: Workspace, openElsewhere?: Set<string>): Promise<void> {
+    async openWorkspace (workspace: Workspace): Promise<void> {
         if (workspace.id === this.current?.id) {
             return
         }
-        openElsewhere ??= await this.registry.openElsewhere()
+        if (!this.store.get(workspace.id)) {
+            this.notifications.info(`Workspace "${workspace.name}" no longer exists`, 'It was deleted in another window.')
+            return
+        }
+        const openElsewhere = await this.registry.openElsewhere()
         if (openElsewhere.has(workspace.id)) {
             this.registry.requestFocus(workspace.id)
             if (!this.current) {
@@ -181,68 +178,20 @@ export class WorkspacesService {
             return
         }
         if (!this.current) {
-            await this.attach(workspace)
+            await this.attach(workspace.id)
         } else {
             this.store.setHandoff(workspace.id)
             this.hostApp.newWindow()
         }
     }
 
-    async showMenu (): Promise<void> {
-        const options: SelectorOption<() => Promise<void>>[] = [
-            { name: 'Open another workspace…', icon: 'fas fa-window-restore', result: () => this.showPicker() },
-            { name: 'New workspace…', icon: 'fas fa-plus', result: () => this.promptNewWorkspace() },
-        ]
-        if (this.current) {
-            options.push(
-                { name: 'Rename this workspace…', icon: 'fas fa-pen', result: () => this.renameCurrent() },
-                { name: 'Change color…', icon: 'fas fa-palette', result: () => this.changeCurrentColor() },
-            )
-        }
-        options.push(
-            { name: 'Delete a workspace…', icon: 'fas fa-trash', result: () => this.promptDelete() },
-            { name: 'Export workspaces…', icon: 'fas fa-file-export', result: () => this.exportWorkspaces() },
-            { name: 'Import workspaces…', icon: 'fas fa-file-import', result: () => this.importWorkspaces() },
-        )
-        let action: (() => Promise<void>) | undefined
-        try {
-            action = await this.selector.show(this.current ? `Workspace: ${this.current.name}` : 'Workspaces', options)
-        } catch {
-            return
-        }
-        await action?.().catch(error => this.notifications.error('Workspace action failed', String(error)))
-    }
-
-    // ---------------------------------------------------------------- workspace CRUD
-
-    private async promptNewWorkspace (): Promise<void> {
-        const name = await this.prompt('Workspace name')
-        if (name) {
-            await this.createWorkspace(name)
-        }
-    }
-
-    /** Without a color, asks for one. */
-    async createWorkspace (name: string, color?: string): Promise<void> {
-        color ??= await this.pickColor(this.nextColor())
+    async createWorkspace (name: string, color: string): Promise<void> {
         const workspace: Workspace = { id: newId(), name, color, createdAt: Date.now() }
         this.store.upsert(workspace)
         if (!this.current) {
-            await this.attach(workspace)
+            await this.attach(workspace.id)
         } else {
             await this.openWorkspace(workspace)
-        }
-    }
-
-    private async renameCurrent (): Promise<void> {
-        if (this.current) {
-            await this.renameWorkspace(this.current)
-        }
-    }
-
-    private async changeCurrentColor (): Promise<void> {
-        if (this.current) {
-            await this.changeColor(this.current)
         }
     }
 
@@ -266,38 +215,17 @@ export class WorkspacesService {
     }
 
     private updateWorkspace (id: string, changes: Partial<Workspace>): void {
-        const stored = this.store.get(id)
-        if (stored) {
-            this.store.upsert({ ...stored, ...changes })
-        }
-        if (this.current?.id === id) {
-            this.current = { ...this.current, ...changes }
+        const updated = this.store.update(id, changes)
+        if (updated && this.current?.id === id) {
+            this.current = updated
             this.applyWindowChrome()
         }
     }
 
     /** Workspaces open in a window (this one or another) can't be deleted */
-    async canDelete (workspace: Workspace, openElsewhere?: Set<string>): Promise<boolean> {
-        openElsewhere ??= await this.registry.openElsewhere()
-        return workspace.id !== this.current?.id && !openElsewhere.has(workspace.id)
-    }
-
-    private async promptDelete (): Promise<void> {
+    async canDelete (workspace: Workspace): Promise<boolean> {
         const openElsewhere = await this.registry.openElsewhere()
-        const deletable = this.sortedWorkspaces().filter(x => x.id !== this.current?.id && !openElsewhere.has(x.id))
-        if (!deletable.length) {
-            this.notifications.info('No workspace can be deleted', 'Close a workspace\'s window before deleting it.')
-            return
-        }
-        let workspace: Workspace
-        try {
-            workspace = await this.selector.show('Delete workspace (open workspaces are not listed)', deletable.map(x => ({
-                name: x.name, color: x.color, icon: 'fas fa-circle', result: x,
-            })))
-        } catch {
-            return
-        }
-        await this.deleteWorkspace(workspace)
+        return workspace.id !== this.current?.id && !openElsewhere.has(workspace.id)
     }
 
     /** Asks for confirmation; returns whether it was deleted. */
@@ -310,12 +238,17 @@ export class WorkspacesService {
         const answer = await this.platform.showMessageBox({
             type: 'warning',
             message: `Delete workspace "${workspace.name}"?`,
-            detail: `Its ${pinCount} pinned tab${pinCount === 1 ? '' : 's'} will be forgotten. This cannot be undone.`,
+            detail: `Its ${plural(pinCount, 'pinned tab')} will be forgotten. This cannot be undone.`,
             buttons: ['Delete', 'Cancel'],
             defaultId: 1,
             cancelId: 1,
         })
         if (answer.response !== 0) {
+            return false
+        }
+        // It may have been opened somewhere while the question was up
+        if (!await this.canDelete(workspace)) {
+            this.notifications.info('Workspace is open', 'It was opened while you were deciding; close its window first.')
             return false
         }
         this.store.remove(workspace.id)
@@ -325,10 +258,15 @@ export class WorkspacesService {
 
     // ---------------------------------------------------------------- attach & restore
 
-    private async attach (workspace: Workspace): Promise<void> {
-        this.current = { ...workspace, lastOpenedAt: Date.now() }
+    /** Loads the workspace as it is stored now (never a caller's copy, which may be stale). */
+    private async attach (id: string): Promise<void> {
+        const workspace = this.store.update(id, { lastOpenedAt: Date.now() })
+        if (!workspace) {
+            this.notifications.info('That workspace no longer exists', 'It was deleted in another window.')
+            return
+        }
+        this.current = workspace
         this.registry.currentId = workspace.id
-        this.store.upsert(this.current)
         this.applyWindowChrome()
         this.attached$.next(this.current)
 
@@ -346,7 +284,7 @@ export class WorkspacesService {
         }
         if (this.unrestorable.length) {
             this.notifications.error(
-                `${this.unrestorable.length} pinned tab(s) could not be restored`,
+                `${plural(this.unrestorable.length, 'pinned tab')} could not be restored`,
                 'They are kept in the workspace and will be retried next time.',
             )
         }
@@ -367,12 +305,12 @@ export class WorkspacesService {
             if (!tab.pinned) {
                 this.app.pinTab(tab)
             }
-            const meta: PinMeta = { id: pin.id, startupCommand: pin.startupCommand, tmux: pin.tmux }
+            const { token: _token, ...meta }: PinRecord = pin
             this.meta.set(tab, meta)
-            this.runStartup(tab, meta).catch(error => console.warn('[workspaces] startup command failed', error))
+            this.runStartup(tab, meta).catch(error => this.errors.log('startup command failed', error))
             return tab
         } catch (error) {
-            console.warn('[workspaces] could not restore pin', pin, error)
+            this.errors.log(`could not restore pin ${pin.id}`, error)
             return null
         }
     }
@@ -480,7 +418,7 @@ export class WorkspacesService {
             return
         }
         clearTimeout(this.saveTimer)
-        this.saveTimer = setTimeout(() => this.save().catch(error => console.error('[workspaces] save failed', error)), SAVE_DEBOUNCE_MS)
+        this.saveTimer = setTimeout(() => this.save().catch(error => this.errors.reportOnce('Workspaces: pinned tabs could not be saved', error)), SAVE_DEBOUNCE_MS)
     }
 
     async save (): Promise<void> {
@@ -500,13 +438,16 @@ export class WorkspacesService {
             token.tabPinned = true
             const terminal = getTerminal(tab)
             const options = terminalTokenOf(token)?.profile?.options
+            if (options?.env) {
+                options.env = stripWslTagFromEnv(options.env)
+            }
             const wslCwd = wslCwds.get(terminal)
             if (wslCwd && options) {
                 options.cwd = wslCwd
             } else {
                 normalizeWslCwd(options, getWslTarget(terminal))
             }
-            pins.push({ id: meta.id, token, startupCommand: meta.startupCommand, tmux: meta.tmux })
+            pins.push({ ...meta, token })
         }
         // The window may have started closing while tokens were collected
         if (this.closing || this.current?.id !== workspace.id) {
@@ -517,53 +458,53 @@ export class WorkspacesService {
 
     // ---------------------------------------------------------------- patches on Tabby internals
 
-    private patchAppService (): void {
+    /** Returns false if this Tabby lacks what the workspaces need (tab pinning, closeWindow). */
+    private patchAppService (): boolean {
         const app = this.app
-        const originalPinTab = app.pinTab.bind(app)
-        const originalUnpinTab = app.unpinTab.bind(app)
-        const originalCloseWindow = app.closeWindow.bind(app)
+        if (typeof app.pinTab !== 'function' || typeof app.unpinTab !== 'function' || typeof app.closeWindow !== 'function') {
+            return false
+        }
 
         // Every pin path (context menu, hotkey) goes through pinTab, so this is where we ask for a name
-        app.pinTab = (tab: BaseTabComponent) => {
+        patchMethod(app, 'pinTab', original => (tab: BaseTabComponent) => {
             const wasPinned = tab.pinned
-            originalPinTab(tab)
+            original(tab)
             if (!wasPinned && tab.pinned && this.current && !this.restoring) {
                 this.getMeta(tab)
                 setTimeout(() => app.renameTab(tab))
             }
             this.scheduleSave()
-        }
+        })
 
-        app.unpinTab = (tab: BaseTabComponent) => {
-            originalUnpinTab(tab)
+        patchMethod(app, 'unpinTab', original => (tab: BaseTabComponent) => {
+            original(tab)
             this.scheduleSave()
-        }
+        })
 
         // Closing the window must not be mistaken for "the user removed all pins"
-        app.closeWindow = async () => {
+        patchMethod(app, 'closeWindow', original => async () => {
             clearTimeout(this.saveTimer)
-            await this.save().catch(() => null)
+            await this.save().catch(error => this.errors.log('save on close failed', error))
             this.closing = true
             try {
-                await originalCloseWindow()
+                await original()
             } finally {
                 if (app.tabs.length) {
                     this.closing = false // close was cancelled
                 }
             }
-        }
+        })
+        return true
     }
 
     /** Prefixes the OS window title with the workspace name, so windows are easy to tell apart in the taskbar. */
-    private patchWindowTitle (): void {
-        const hostWindow = this.hostWindow
-        const originalSetTitle = hostWindow.setTitle.bind(hostWindow)
-        hostWindow.setTitle = (title?: string) => {
+    private patchWindowTitle (): boolean {
+        return patchMethod(this.hostWindow, 'setTitle', original => (title?: string) => {
             if (!this.current) {
-                return originalSetTitle(title)
+                return original(title)
             }
-            return originalSetTitle(title ? `[${this.current.name}] ${title}` : this.current.name)
-        }
+            return original(title ? `[${this.current.name}] ${title}` : this.current.name)
+        })
     }
 
     private applyWindowChrome (): void {
@@ -571,15 +512,16 @@ export class WorkspacesService {
             this.styleElement = document.createElement('style')
             document.head.appendChild(this.styleElement)
         }
-        const color = this.config.store.workspaces?.colorStripe !== false ? this.current?.color : undefined
+        const settings = workspacesSettings(this.config)
+        const color = settings.colorStripe ? this.current?.color : undefined
         this.styleElement.textContent = color
-            ? `body::after { content: ''; position: fixed; left: 0; right: 0; top: 0; height: 3px;
+            ? `body::after { content: ''; position: fixed; left: 0; right: 0; top: 0; height: ${STRIPE_HEIGHT_PX}px;
                  background: ${color}; z-index: 100000; pointer-events: none; }`
             : ''
         const tab = this.app.activeTab
         this.hostWindow.setTitle(tab ? tab.customTitle || tab.title : undefined)
-        this.taskbar.apply(this.current, this.config.store.workspaces?.taskbarIcon !== false)
-            .catch(error => console.error('[workspaces] taskbar icon failed', error))
+        this.taskbar.apply(this.current, settings.taskbarIcon)
+            .catch(error => this.errors.log('taskbar icon failed', error))
     }
 
     private onListChangedElsewhere (): void {
@@ -587,8 +529,14 @@ export class WorkspacesService {
             return
         }
         const fresh = this.store.get(this.current.id)
-        if (fresh && (fresh.name !== this.current.name || fresh.color !== this.current.color)) {
-            this.current = { ...this.current, name: fresh.name, color: fresh.color }
+        if (!fresh) {
+            // Removed elsewhere (e.g. an import with "Replace") while open here: this window still
+            // has its pins, so put it back rather than lose them when the window closes
+            this.store.upsert(this.current)
+            return
+        }
+        if (fresh.name !== this.current.name || fresh.color !== this.current.color) {
+            this.current = fresh
             this.applyWindowChrome()
         }
     }
@@ -598,7 +546,7 @@ export class WorkspacesService {
     async exportWorkspaces (): Promise<void> {
         await this.save()
         const data: ExportFile = {
-            format: 'tabby-workspaces',
+            format: EXPORT_FORMAT,
             version: 1,
             exportedAt: new Date().toISOString(),
             workspaces: this.store.list().map(x => ({ ...x, pins: this.store.getPins(x.id) })),
@@ -611,7 +559,7 @@ export class WorkspacesService {
         }
         await download.write(bytes)
         download.close()
-        this.notifications.notice(`Exported ${data.workspaces.length} workspace(s)`)
+        this.notifications.notice(`Exported ${plural(data.workspaces.length, 'workspace')}`)
     }
 
     async importWorkspaces (): Promise<void> {
@@ -636,14 +584,14 @@ export class WorkspacesService {
             this.notifications.error('Import failed', 'The file is not valid JSON.')
             return
         }
-        if (data?.format !== 'tabby-workspaces' || !Array.isArray(data.workspaces)) {
+        if (data?.format !== EXPORT_FORMAT || !Array.isArray(data.workspaces)) {
             this.notifications.error('Import failed', 'This is not a Tabby workspaces export.')
             return
         }
 
         let mode: 'merge' | 'replace'
         try {
-            mode = await this.selector.show(`Import ${data.workspaces.length} workspace(s)`, [
+            mode = await this.selector.show(`Import ${plural(data.workspaces.length, 'workspace')}`, [
                 { name: 'Merge', description: 'Add them to your workspaces; ones from an earlier export of this machine are updated', result: 'merge' as const },
                 { name: 'Replace', description: 'Delete all existing workspaces first', result: 'replace' as const },
             ])
@@ -677,9 +625,9 @@ export class WorkspacesService {
             imported++
         }
         if (skipped.length) {
-            this.notifications.info(`Imported ${imported} workspace(s)`, `Skipped because they are open right now: ${skipped.join(', ')}`)
+            this.notifications.info(`Imported ${plural(imported, 'workspace')}`, `Skipped because they are open right now: ${skipped.join(', ')}`)
         } else {
-            this.notifications.notice(`Imported ${imported} workspace(s)`)
+            this.notifications.notice(`Imported ${plural(imported, 'workspace')}`)
         }
     }
 

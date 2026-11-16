@@ -3,10 +3,12 @@ import { CommonModule } from '@angular/common'
 import { FormsModule } from '@angular/forms'
 import TabbyCoreModule, { CLIHandler, CommandProvider, ConfigProvider, HotkeyProvider, HotkeysService, TabContextMenuItemProvider } from 'tabby-core'
 import { WorkspacesService } from './workspaces.service'
+import { ErrorReporter } from './errors'
 import {
-    WorkspacesCommandProvider, WorkspacesConfigProvider, WorkspacesHotkeyProvider, WorkspacesStartupCLIHandler,
-    WorkspacesTabContextMenu,
+    WorkspacesCommandProvider, WorkspacesHotkeyProvider, WorkspacesStartupCLIHandler, WorkspacesTabContextMenu,
 } from './providers'
+import { HOTKEY_LAUNCHER, WorkspacesConfigProvider } from './config'
+import { WorkspacesLauncher } from './launcher'
 import { SettingsTabProvider } from 'tabby-settings'
 import { WorkspacesSettingsTabComponent, WorkspacesSettingsTabProvider } from './settings'
 
@@ -25,16 +27,22 @@ import { WorkspacesSettingsTabComponent, WorkspacesSettingsTabProvider } from '.
 export default class WorkspacesModule {
     constructor (
         workspaces: WorkspacesService,
+        launcher: WorkspacesLauncher,
         hotkeys: HotkeysService,
         @Inject(CommandProvider) commandProviders: CommandProvider[],
+        errors: ErrorReporter,
     ) {
-        workspaces.init()
-        putFirst(commandProviders, x => x instanceof WorkspacesCommandProvider)
+        // This runs while Tabby bootstraps: a failure here must not take Tabby down with it
+        try {
+            workspaces.init()
+            putFirst(commandProviders, x => x instanceof WorkspacesCommandProvider)
+        } catch (error) {
+            errors.report('Workspaces plugin failed to start', error)
+            return
+        }
         hotkeys.hotkey$.subscribe(hotkey => {
-            if (hotkey === 'workspaces-open') {
-                workspaces.showPicker()
-            } else if (hotkey === 'workspaces-menu') {
-                workspaces.showMenu()
+            if (hotkey === HOTKEY_LAUNCHER) {
+                launcher.show()
             }
         })
     }

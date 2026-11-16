@@ -18,19 +18,21 @@ export interface PinRecord {
     tmux?: boolean
 }
 
-/** Per-tab runtime metadata, kept for the lifetime of a tab. */
-export interface PinMeta {
-    id: string
-    startupCommand?: string
-    tmux?: boolean
-}
+/** Per-tab runtime metadata, kept for the lifetime of a tab: a pin record without its token. */
+export type PinMeta = Omit<PinRecord, 'token'>
+
+/** Identifies an export file; never change it, or older exports stop importing. */
+export const EXPORT_FORMAT = 'tabby-workspaces'
 
 export interface ExportFile {
-    format: 'tabby-workspaces'
+    format: typeof EXPORT_FORMAT
     version: 1
     exportedAt: string
     workspaces: (Workspace & { pins: PinRecord[] })[]
 }
+
+/** Used when a stored color is missing or not a hex color */
+export const FALLBACK_COLOR = '#6b7280'
 
 export const WORKSPACE_COLORS: { name: string, value: string }[] = [
     { name: 'Blue', value: '#3b82f6' },
@@ -41,9 +43,26 @@ export const WORKSPACE_COLORS: { name: string, value: string }[] = [
     { name: 'Teal', value: '#14b8a6' },
     { name: 'Pink', value: '#ec4899' },
     { name: 'Yellow', value: '#eab308' },
-    { name: 'Gray', value: '#6b7280' },
+    { name: 'Gray', value: FALLBACK_COLOR },
 ]
+
+export const NAME_MAX_LENGTH = 60
 
 export function newId (): string {
     return crypto.randomUUID()
+}
+
+/** The workspace color, safe to put into CSS or SVG */
+export function safeColor (color?: string): string {
+    return color && /^#[0-9a-f]{3,8}$/i.test(color) ? color : FALLBACK_COLOR
+}
+
+/** The letter shown on a workspace's badge, card and taskbar icon */
+export function initialOf (name?: string, fallback = '?'): string {
+    return (name?.trim()[0] ?? fallback).toUpperCase()
+}
+
+/** plural(1, 'pinned tab') → "1 pinned tab", plural(3, 'workspace') → "3 workspaces" */
+export function plural (count: number, word: string): string {
+    return `${count} ${word}${count === 1 ? '' : 's'}`
 }

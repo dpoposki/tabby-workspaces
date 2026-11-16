@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { HostAppService, HostWindowService, Platform, PlatformService } from 'tabby-core'
-import { Workspace } from './models'
+import { initialOf, safeColor, Workspace } from './models'
 
 /*
  * Makes a workspace window recognisable in the taskbar, like Chrome profiles:
@@ -26,13 +26,14 @@ export class TaskbarIdentity {
         private platform: PlatformService,
     ) { }
 
-    get supported (): boolean {
-        return this.hostApp.platform === Platform.Windows || this.hostApp.platform === Platform.Linux
+    /** macOS has one Dock icon per app, so per-window icons don't exist there */
+    static isSupported (platform: Platform): boolean {
+        return platform === Platform.Windows || platform === Platform.Linux
     }
 
     /** Applies (or refreshes) the workspace's icon; cheap to call repeatedly. */
     async apply (workspace: Workspace | null, enabled: boolean): Promise<void> {
-        if (!this.supported || !workspace || !enabled) {
+        if (!TaskbarIdentity.isSupported(this.hostApp.platform) || !workspace || !enabled) {
             // A window never leaves its workspace, and a switched-off setting applies
             // to new windows, so there is nothing to undo here
             return
@@ -99,8 +100,8 @@ function drawIcon (size: number, logo: HTMLImageElement | null, workspace: Works
     const canvas = document.createElement('canvas')
     canvas.width = canvas.height = size
     const ctx = canvas.getContext('2d')!
-    const color = /^#[0-9a-f]{3,8}$/i.test(workspace.color) ? workspace.color : '#6b7280'
-    const initial = (workspace.name.trim()[0] ?? '?').toUpperCase()
+    const color = safeColor(workspace.color)
+    const initial = initialOf(workspace.name)
 
     if (logo) {
         // Logo in the top left, colored initial over the bottom right (Chrome's profile badge)

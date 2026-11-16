@@ -1,11 +1,14 @@
 import { Injectable } from '@angular/core'
 import {
     AppService, BaseTabComponent, CLIEvent, CLIHandler, Command, CommandContext, CommandLocation, CommandProvider,
-    ConfigProvider, ConfigService, HotkeyDescription, HotkeyProvider, MenuItemOptions, Platform, TabContextMenuItemProvider,
+    ConfigService, HotkeyDescription, HotkeyProvider, MenuItemOptions, TabContextMenuItemProvider,
 } from 'tabby-core'
 import { WorkspacesService } from './workspaces.service'
 import { isWslTab } from './terminal'
 import { WorkspacesLauncher } from './launcher'
+import { ErrorReporter } from './errors'
+import { HOTKEY_LAUNCHER, workspacesSettings } from './config'
+import { initialOf, safeColor } from './models'
 
 /** Right-click menu on a pinned tab: pin name, startup command, tmux. */
 @Injectable()
@@ -52,7 +55,12 @@ export class WorkspacesTabContextMenu extends TabContextMenuItemProvider {
 /** Toolbar badge (workspace color + initial) and command palette entries. */
 @Injectable()
 export class WorkspacesCommandProvider extends CommandProvider {
-    constructor (private workspaces: WorkspacesService, private launcher: WorkspacesLauncher, private config: ConfigService) {
+    constructor (
+        private workspaces: WorkspacesService,
+        private launcher: WorkspacesLauncher,
+        private config: ConfigService,
+        private errors: ErrorReporter,
+    ) {
         super()
     }
 
@@ -68,14 +76,9 @@ export class WorkspacesCommandProvider extends CommandProvider {
         })
         badge.id = 'workspaces:menu'
         badge.locations = [CommandLocation.RightToolbar]
-        badge.weight = -10
+        badge.weight = BADGE_WEIGHT
         // Like Chrome's profile button: the launcher, where you switch, add or edit workspaces
         badge.run = async () => this.launcher.show()
-
-        const open = new Command()
-        open.id = 'workspaces:open'
-        open.label = 'Workspaces: Open another workspace'
-        open.run = async () => { service.showPicker().catch(error => console.error('[workspaces]', error)) }
 
         const launcher = new Command()
         launcher.id = 'workspaces:launcher'
@@ -83,17 +86,17 @@ export class WorkspacesCommandProvider extends CommandProvider {
         launcher.run = async () => this.launcher.show()
 
         // Start page of a window without a workspace: one entry per recent workspace
-        // (like Chrome's profile picker), then the full picker
-        const settings = this.config.store.workspaces
+        // (like Chrome's profile picker), then "All workspaces…" for the launcher
+        const settings = workspacesSettings(this.config)
         const recent = service.current || !settings.startPageList ? [] : service.sortedWorkspaces().slice(0, START_PAGE_MAX_WORKSPACES)
-        const entries = recent.map((workspace, index) => {
+        const entries = recent.map(workspace => {
             const entry = new Command()
             entry.id = `workspaces:start-page:${workspace.id}`
             entry.label = workspace.name
             entry.icon = badgeIcon(workspace.name, workspace.color)
             entry.locations = [CommandLocation.StartPage]
             entry.weight = 0
-            entry.run = async () => { service.openWorkspace(workspace).catch(error => console.error('[workspaces]', error)) }
+            entry.run = async () => this.errors.run(`Could not open "${workspace.name}"`, () => service.openWorkspace(workspace))
             return entry
         })
 
@@ -107,13 +110,15 @@ export class WorkspacesCommandProvider extends CommandProvider {
 
         return [
             ...settings.toolbarBadge ? [badge] : [],
-            open, launcher, ...entries,
+            launcher, ...entries,
             ...settings.startPageList ? [startPage] : [],
         ]
     }
 }
 
 const START_PAGE_MAX_WORKSPACES = 8
+/** Left of Tabby's own right-hand toolbar buttons (settings cog is 0) */
+const BADGE_WEIGHT = -10
 
 /**
  * When Tabby starts, show the workspace launcher instead of the terminal it would
@@ -152,42 +157,14 @@ const START_PAGE_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16
 export class WorkspacesHotkeyProvider extends HotkeyProvider {
     async provide (): Promise<HotkeyDescription[]> {
         return [
-            { id: 'workspaces-open', name: 'Workspaces: open another workspace' },
-            { id: 'workspaces-menu', name: 'Workspaces: menu' },
+            { id: HOTKEY_LAUNCHER, name: 'Workspaces: show launcher' },
         ]
     }
 }
 
-@Injectable()
-export class WorkspacesConfigProvider extends ConfigProvider {
-    defaults = {
-        workspaces: {
-            showLauncher: true,
-            startPageList: true,
-            toolbarBadge: true,
-            colorStripe: true,
-            taskbarIcon: true,
-        },
-        hotkeys: {
-            'workspaces-open': ['Ctrl-Alt-N'],
-            'workspaces-menu': ['Ctrl-Alt-W'],
-        },
-    }
-
-    // Tabby's own macOS shortcuts use ⌘ (e.g. ⌘-⌥-arrows for panes)
-    platformDefaults = {
-        [Platform.macOS]: {
-            hotkeys: {
-                'workspaces-open': ['⌘-⌥-N'],
-                'workspaces-menu': ['⌘-⌥-W'],
-            },
-        },
-    }
-}
-
 function badgeIcon (name?: string, color?: string): string {
-    const initial = escapeXml((name?.trim()[0] ?? '?').toUpperCase())
-    const fill = color && /^#[0-9a-f]{3,8}$/i.test(color) ? color : '#6b7280'
+    const initial = escapeXml(initialOf(name))
+    const fill = safeColor(color)
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
         <circle cx="8" cy="8" r="7.5" fill="${fill}"/>
         <text x="8" y="11.6" text-anchor="middle" font-size="10" font-weight="700" font-family="sans-serif" fill="#fff">${initial}</text>

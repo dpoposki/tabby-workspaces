@@ -1,12 +1,23 @@
 import { Injectable, Injector, NgZone } from '@angular/core'
 import { AppService, ConfigService, HostAppService, MenuItemOptions, PlatformService } from 'tabby-core'
 import { TerminalService } from 'tabby-local'
-import { Workspace, WORKSPACE_COLORS } from './models'
+import { initialOf, NAME_MAX_LENGTH, plural, safeColor, Workspace, WORKSPACE_COLORS } from './models'
 import { WorkspaceStore } from './store'
 import { WindowRegistry } from './registry'
 import { WorkspacesService } from './workspaces.service'
+import { ErrorReporter } from './errors'
+import { workspacesSettings } from './config'
 
 const ROOT_ID = 'tabby-workspaces-launcher'
+/** Fade-out duration; the CSS transition uses the same value */
+const HIDE_MS = 160
+/** Cards that get a 1–9 key */
+const SHORTCUT_CARDS = 9
+
+/** Cards fade in one after another, the first dozen staggered */
+function cardDelay (index: number): string {
+    return `${Math.min(index, 12) * 30}ms`
+}
 
 /**
  * Full-window workspace chooser, like Chrome's profile picker: one big card per
@@ -30,14 +41,11 @@ export class WorkspacesLauncher {
         private service: WorkspacesService,
         private store: WorkspaceStore,
         private zone: NgZone,
+        private errors: ErrorReporter,
     ) { }
 
-    get visible (): boolean {
-        return !!this.root
-    }
-
     get showOnStartup (): boolean {
-        return this.config.store.workspaces?.showLauncher !== false
+        return workspacesSettings(this.config).showLauncher
     }
 
     show (): void {
@@ -49,6 +57,8 @@ export class WorkspacesLauncher {
             // Anything that fills this window (a workspace, a hotkey-opened tab) dismisses the launcher
             this.service.attached$.subscribe(() => this.hide())
             this.app.tabsChanged$.subscribe(() => this.app.tabs.length && this.hide())
+            // Renamed, recolored, added or deleted in another window: never show stale cards
+            this.store.listChangedElsewhere$.subscribe(() => this.zone.run(() => this.refresh()))
         }
         installStyles()
         this.root = this.build()
@@ -65,16 +75,14 @@ export class WorkspacesLauncher {
         this.root = null
         this.grid = null
         root.classList.add('wl-leaving')
-        setTimeout(() => root.remove(), 160)
+        setTimeout(() => root.remove(), HIDE_MS)
     }
 
     // ---------------------------------------------------------------- actions
 
+    /** On this window's own card it simply closes the launcher (openWorkspace does nothing then) */
     private open (workspace: Workspace): void {
         this.hide()
-        if (workspace.id === this.service.current?.id) {
-            return
-        }
         this.run(() => this.service.openWorkspace(workspace))
     }
 
@@ -97,7 +105,7 @@ export class WorkspacesLauncher {
 
     private setShowOnStartup (value: boolean): void {
         this.zone.run(() => {
-            this.config.store.workspaces.showLauncher = value
+            workspacesSettings(this.config).showLauncher = value
             this.config.save()
         })
     }
@@ -125,17 +133,16 @@ export class WorkspacesLauncher {
 
     /** Re-render the cards after an edit, keeping the launcher open */
     private refresh (): void {
-        const grid = this.grid
-        if (!grid) {
+        if (!this.grid) {
             return
         }
-        grid.replaceChildren(...this.service.sortedWorkspaces().map((workspace, index) => this.workspaceCard(workspace, index)), this.addCard())
-        grid.querySelectorAll<HTMLElement>('.wl-card').forEach(card => card.style.animation = 'none')
+        this.renderCards(this.grid)
+        this.grid.querySelectorAll<HTMLElement>('.wl-card').forEach(card => card.style.animation = 'none')
         this.markOpenElsewhere().catch(() => null)
     }
 
     private run (action: () => Promise<unknown>): void {
-        this.zone.run(() => action().catch(error => console.error('[workspaces]', error)))
+        this.errors.run('Workspaces: that didn\'t work', action)
     }
 
     // ---------------------------------------------------------------- DOM
@@ -160,10 +167,9 @@ export class WorkspacesLauncher {
         main.appendChild(el('h1', 'wl-title', 'Choose a workspace'))
         main.appendChild(el('p', 'wl-subtitle', 'Each workspace opens with its own pinned tabs, right where you left them.'))
 
-        const grid = this.grid = el('div', 'wl-grid')
-        this.service.sortedWorkspaces().forEach((workspace, index) => grid.appendChild(this.workspaceCard(workspace, index)))
-        grid.appendChild(this.addCard())
-        main.appendChild(grid)
+        this.grid = el('div', 'wl-grid')
+        this.renderCards(this.grid)
+        main.appendChild(this.grid)
         root.appendChild(main)
 
         const footer = el('div', 'wl-footer')
@@ -189,12 +195,17 @@ export class WorkspacesLauncher {
         return root
     }
 
+    private renderCards (grid: HTMLElement): void {
+        const workspaces = this.service.sortedWorkspaces()
+        grid.replaceChildren(...workspaces.map((workspace, index) => this.workspaceCard(workspace, index)), this.addCard(workspaces.length))
+    }
+
     private workspaceCard (workspace: Workspace, index: number): HTMLElement {
         const card = el('button', 'wl-card')
         card.dataset.id = workspace.id
         card.style.setProperty('--wl-color', safeColor(workspace.color))
-        card.style.setProperty('--wl-delay', `${Math.min(index, 12) * 30}ms`)
-        if (index < 9) {
+        card.style.setProperty('--wl-delay', cardDelay(index))
+        if (index < SHORTCUT_CARDS) {
             card.appendChild(el('span', 'wl-key', String(index + 1)))
         }
         // A span, not a nested <button> (invalid inside the card button)
@@ -202,35 +213,30 @@ export class WorkspacesLauncher {
         more.innerHTML = MORE_ICON
         more.title = 'Edit or delete'
         more.setAttribute('role', 'button')
-        more.addEventListener('click', event => {
-            event.stopPropagation()
-            this.showCardMenu(workspace, event).catch(error => console.error('[workspaces]', error))
-        })
-        card.appendChild(more)
-        card.addEventListener('contextmenu', event => {
+        const menu = (event: MouseEvent) => {
             event.preventDefault()
-            this.showCardMenu(workspace, event).catch(error => console.error('[workspaces]', error))
-        })
-        card.appendChild(el('span', 'wl-avatar', (workspace.name.trim()[0] ?? '?').toUpperCase()))
-        card.appendChild(el('span', 'wl-name', workspace.name))
-        const pins = this.store.getPins(workspace.id).length
-        const meta = [`${pins} pinned tab${pins === 1 ? '' : 's'}`]
-        const opened = workspace.lastOpenedAt ?? workspace.createdAt
-        if (workspace.id === this.service.current?.id) {
-            card.classList.add('wl-current')
-            meta.splice(0, meta.length, 'This window')
-        } else if (opened) {
-            meta.push(timeAgo(opened))
+            event.stopPropagation()
+            this.run(() => this.showCardMenu(workspace, event))
         }
-        card.appendChild(el('span', 'wl-meta', meta.join(' · ')))
+        more.addEventListener('click', menu)
+        card.appendChild(more)
+        card.addEventListener('contextmenu', menu)
+        card.appendChild(el('span', 'wl-avatar', initialOf(workspace.name)))
+        card.appendChild(el('span', 'wl-name', workspace.name))
+        const isCurrent = workspace.id === this.service.current?.id
+        card.classList.toggle('wl-current', isCurrent)
+        const meta = isCurrent
+            ? 'This window'
+            : `${plural(this.store.getPins(workspace.id).length, 'pinned tab')} · ${timeAgo(workspace.lastOpenedAt ?? workspace.createdAt)}`
+        card.appendChild(el('span', 'wl-meta', meta))
         card.title = workspace.name
         card.addEventListener('click', () => this.open(workspace))
         return card
     }
 
-    private addCard (): HTMLElement {
+    private addCard (index: number): HTMLElement {
         const card = el('button', 'wl-card wl-add')
-        card.style.setProperty('--wl-delay', `${Math.min(this.store.list().length, 12) * 30}ms`)
+        card.style.setProperty('--wl-delay', cardDelay(index))
         card.appendChild(el('span', 'wl-avatar', '+'))
         card.appendChild(el('span', 'wl-name', 'Add'))
         card.appendChild(el('span', 'wl-meta', 'New workspace'))
@@ -248,8 +254,8 @@ export class WorkspacesLauncher {
 
         const input = el('input', 'wl-input') as HTMLInputElement
         input.placeholder = 'Workspace name'
-        input.maxLength = 60
-        input.addEventListener('input', () => { avatar.textContent = (input.value.trim()[0] ?? '+').toUpperCase() })
+        input.maxLength = NAME_MAX_LENGTH
+        input.addEventListener('input', () => { avatar.textContent = initialOf(input.value, '+') })
         form.appendChild(input)
 
         const swatches = el('div', 'wl-swatches')
@@ -285,7 +291,7 @@ export class WorkspacesLauncher {
         form.addEventListener('keydown', event => {
             if (event.key === 'Escape') {
                 event.stopPropagation()
-                form.replaceWith(this.addCard())
+                form.replaceWith(this.addCard(0))
                 this.grid?.querySelector<HTMLElement>('.wl-add')?.focus()
             }
         })
@@ -341,10 +347,6 @@ function el (tag: string, className = '', text?: string): HTMLElement {
         node.textContent = text
     }
     return node
-}
-
-function safeColor (color?: string): string {
-    return color && /^#[0-9a-f]{3,8}$/i.test(color) ? color : '#6b7280'
 }
 
 function timeAgo (at: number): string {
@@ -403,7 +405,7 @@ const STYLES = `
     outline: none;
     animation: wl-fade .2s ease-out;
 }
-.wl-root.wl-leaving { animation: wl-fade-out .16s ease-in forwards; pointer-events: none; }
+.wl-root.wl-leaving { animation: wl-fade-out ${HIDE_MS}ms ease-in forwards; pointer-events: none; }
 .wl-drag { flex: none; height: 38px; -webkit-app-region: drag; }
 .wl-main {
     flex: auto; overflow-y: auto; padding: 24px 32px 40px;
