@@ -46,7 +46,7 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
     init (): void {
         this.app.tabOpened$.subscribe(tab => this.watchTab(tab))
         this.app.tabsChanged$.subscribe(() => this.scheduleSave())
-        this.app.tabClosed$.subscribe(() => this.scheduleSave())
+        this.app.tabClosed$.subscribe(() => this.app.tabs.length ? this.scheduleSave() : this.saveEmpty())
         setInterval(() => this.scheduleSave(), SAVE_INTERVAL_MS)
     }
 
@@ -61,7 +61,9 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
         if (!workspace) {
             return false
         }
-        this.store.markOpened(id)
+        if (!this.store.readOnly) {
+            this.store.markOpened(id)
+        }
         this.current$.next(workspace)
         this.attached$.next(workspace)
 
@@ -205,8 +207,26 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
         }
     }
 
+    /**
+     * The last tab just closed. With Tabby's "last tab closes window" setting the window
+     * closes right away, without going through closeWindow (so beforeCloseWindow doesn't
+     * run) and before a debounced save would. With no tabs left there are no tokens to
+     * collect, so this saves synchronously, before the window goes.
+     */
+    private saveEmpty (): void {
+        if (!this.current || this.restoring || this.closing || this.store.readOnly) {
+            return
+        }
+        clearTimeout(this.saveTimer)
+        try {
+            this.store.setPins(this.current.id, [...this.unrestorable])
+        } catch (error) {
+            this.errors.reportOnce('Workspaces: pinned tabs could not be saved', error)
+        }
+    }
+
     scheduleSave (): void {
-        if (!this.current || this.restoring || this.closing) {
+        if (!this.current || this.restoring || this.closing || this.store.readOnly) {
             return
         }
         clearTimeout(this.saveTimer)
@@ -218,7 +238,7 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
 
     async save (): Promise<void> {
         const workspace = this.current
-        if (!workspace || this.restoring || this.closing) {
+        if (!workspace || this.restoring || this.closing || this.store.readOnly) {
             return
         }
         const pinnedTabs = this.app.tabs.filter(x => x.pinned)

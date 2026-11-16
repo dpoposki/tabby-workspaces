@@ -65,6 +65,12 @@ export class WorkspacesService {
 
         this.registry.focusRequested$.subscribe(() => this.zone.run(() => this.hostWindow.bringToFront()))
         this.store.listChangedElsewhere$.subscribe(() => this.zone.run(() => this.session.reload()))
+        if (this.store.newerSchema) {
+            setTimeout(() => this.notifications.error(
+                'Workspaces: saved by a newer plugin version',
+                'Your workspaces open as usual, but changes aren\'t saved until you update the plugin.',
+            ), 3000)
+        }
         this.store.corrupted$.subscribe(({ key, backupKey }) => this.zone.run(() => this.notifications.error(
             'Workspaces: stored data was unreadable',
             `It was set aside under "${backupKey}" in Tabby's local storage (was "${key}").`,

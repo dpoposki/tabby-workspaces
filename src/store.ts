@@ -15,6 +15,18 @@ import { withLock } from './locks'
  * Callers should not hold on to Workspace objects: another window may have
  * renamed or deleted the workspace since. Re-read by id before acting on one.
  */
+/**
+ * Version of the stored data's shape. When it changes, bump it and add a migration;
+ * unversioned data (from before versioning) is version 1.
+ */
+export const SCHEMA_VERSION = 1
+const SCHEMA_KEY = 'tabbyWorkspaces.schema'
+/**
+ * MIGRATIONS[n] upgrades the stored data from version n to n + 1. Several windows may
+ * start at once, so a migration must be safe to run twice.
+ */
+const MIGRATIONS: Record<number, () => void> = {}
+
 const LIST_KEY = 'tabbyWorkspaces.list'
 const PINS_PREFIX = 'tabbyWorkspaces.pins.'
 const OPENED_PREFIX = 'tabbyWorkspaces.opened.'
@@ -29,8 +41,14 @@ export class WorkspaceStore {
     readonly listChangedElsewhere$ = new Subject<void>()
     /** Stored data couldn't be read; the raw value was copied to `backupKey` */
     readonly corrupted$ = new Subject<{ key: string, backupKey: string }>()
+    /**
+     * Set when the stored data was written by a newer version of the plugin. Nothing is
+     * written then, so this older version can't damage data it doesn't understand.
+     */
+    readonly newerSchema: number | null
 
     constructor () {
+        this.newerSchema = this.migrate()
         window.addEventListener('storage', event => {
             if (event.key === LIST_KEY) {
                 this.listChangedElsewhere$.next()
@@ -75,6 +93,7 @@ export class WorkspaceStore {
     }
 
     remove (id: string): void {
+        this.assertWritable()
         this.write(LIST_KEY, this.list().filter(x => x.id !== id))
         window.localStorage.removeItem(PINS_PREFIX + id)
         window.localStorage.removeItem(OPENED_PREFIX + id)
@@ -82,7 +101,7 @@ export class WorkspaceStore {
 
     /** Records that the workspace was just opened (for the "recent first" order) */
     markOpened (id: string): void {
-        window.localStorage.setItem(OPENED_PREFIX + id, String(Date.now()))
+        this.write(OPENED_PREFIX + id, Date.now())
     }
 
     getPins (id: string): PinRecord[] {
@@ -132,7 +151,34 @@ export class WorkspaceStore {
 
     /** Throws on a full quota, so callers can tell the user their changes weren't saved. */
     private write (key: string, value: unknown): void {
+        this.assertWritable()
         window.localStorage.setItem(key, JSON.stringify(value))
+    }
+
+    /** True when nothing may be written (see newerSchema) */
+    get readOnly (): boolean {
+        return this.newerSchema !== null
+    }
+
+    private assertWritable (): void {
+        if (this.readOnly) {
+            throw new Error('Workspaces were saved by a newer version of the plugin; update it to make changes.')
+        }
+    }
+
+    /** Brings stored data up to SCHEMA_VERSION; returns the stored version if it's newer than this code. */
+    private migrate (): number | null {
+        const stored = Number(window.localStorage.getItem(SCHEMA_KEY)) || 1
+        if (stored > SCHEMA_VERSION) {
+            return stored
+        }
+        for (let version = stored; version < SCHEMA_VERSION; version++) {
+            MIGRATIONS[version]?.()
+        }
+        if (stored !== SCHEMA_VERSION || !window.localStorage.getItem(SCHEMA_KEY)) {
+            window.localStorage.setItem(SCHEMA_KEY, String(SCHEMA_VERSION))
+        }
+        return null
     }
 
     /**

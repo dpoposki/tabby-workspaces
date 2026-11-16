@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core'
 import { NotificationsService, PlatformService, SelectorService } from 'tabby-core'
-import { EXPORT_FORMAT, ExportFile, plural, WORKSPACE_COLORS } from './models'
+import { EXPORT_FORMAT, EXPORT_VERSION, ExportFile, plural, WORKSPACE_COLORS } from './models'
 import { WorkspaceStore } from './store'
 import { WindowRegistry } from './registry'
 import { WorkspaceSession } from './session'
@@ -21,7 +21,7 @@ export class WorkspacesBackup {
         await this.session.save()
         const data: ExportFile = {
             format: EXPORT_FORMAT,
-            version: 1,
+            version: EXPORT_VERSION,
             exportedAt: new Date().toISOString(),
             workspaces: this.store.list().map(x => ({ ...x, pins: this.store.getPins(x.id) })),
         }
@@ -60,6 +60,10 @@ export class WorkspacesBackup {
         }
         if (data?.format !== EXPORT_FORMAT || !Array.isArray(data.workspaces)) {
             this.notifications.error('Import failed', 'This is not a Tabby workspaces export.')
+            return
+        }
+        if (typeof data.version !== 'number' || data.version > EXPORT_VERSION) {
+            this.notifications.error('Import failed', 'This file was exported by a newer version of the workspaces plugin. Update the plugin first.')
             return
         }
 

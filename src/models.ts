@@ -24,9 +24,12 @@ export type PinMeta = Omit<PinRecord, 'token'>
 /** Identifies an export file; never change it, or older exports stop importing. */
 export const EXPORT_FORMAT = 'tabby-workspaces'
 
+/** Version of the export file's shape; older files must keep importing when it's bumped */
+export const EXPORT_VERSION = 1
+
 export interface ExportFile {
     format: typeof EXPORT_FORMAT
-    version: 1
+    version: number
     exportedAt: string
     workspaces: (Workspace & { pins: PinRecord[] })[]
 }
