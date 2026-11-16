@@ -51,21 +51,12 @@ export class WorkspacesBackup {
         }
         file.close()
 
-        let data: ExportFile
-        try {
-            data = JSON.parse(new TextDecoder().decode(concat(chunks)))
-        } catch {
-            this.notifications.error('Import failed', 'The file is not valid JSON.')
+        const parsed = parseExport(new TextDecoder().decode(concat(chunks)))
+        if ('error' in parsed) {
+            this.notifications.error('Import failed', parsed.error)
             return
         }
-        if (data?.format !== EXPORT_FORMAT || !Array.isArray(data.workspaces)) {
-            this.notifications.error('Import failed', 'This is not a Tabby workspaces export.')
-            return
-        }
-        if (typeof data.version !== 'number' || data.version > EXPORT_VERSION) {
-            this.notifications.error('Import failed', 'This file was exported by a newer version of the workspaces plugin. Update the plugin first.')
-            return
-        }
+        const data = parsed.data
 
         let mode: 'merge' | 'replace'
         try {
@@ -108,6 +99,23 @@ export class WorkspacesBackup {
             this.notifications.notice(`Imported ${plural(imported, 'workspace')}`)
         }
     }
+}
+
+/** Reads an export file; an error message if it isn't one this version can import. */
+export function parseExport (text: string): { data: ExportFile } | { error: string } {
+    let data: ExportFile
+    try {
+        data = JSON.parse(text)
+    } catch {
+        return { error: 'The file is not valid JSON.' }
+    }
+    if (data?.format !== EXPORT_FORMAT || !Array.isArray(data.workspaces)) {
+        return { error: 'This is not a Tabby workspaces export.' }
+    }
+    if (typeof data.version !== 'number' || data.version > EXPORT_VERSION) {
+        return { error: 'This file was exported by a newer version of the workspaces plugin. Update the plugin first.' }
+    }
+    return { data }
 }
 
 function concat (chunks: Uint8Array[]): Uint8Array {
