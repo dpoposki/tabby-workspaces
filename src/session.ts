@@ -52,12 +52,16 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
 
     // ---------------------------------------------------------------- attach & restore
 
-    /** Loads the workspace as it is stored now; false if it no longer exists. */
+    /**
+     * Loads the workspace as it is stored now; false if it no longer exists. The caller
+     * must have claimed it (WindowRegistry.claim), so no other window has it open.
+     */
     async attach (id: string): Promise<boolean> {
-        const workspace = this.store.update(id, { lastOpenedAt: Date.now() })
+        const workspace = this.store.get(id)
         if (!workspace) {
             return false
         }
+        this.store.markOpened(id)
         this.current$.next(workspace)
         this.attached$.next(workspace)
 

@@ -1,21 +1,27 @@
 import { Injectable } from '@angular/core'
 import { Subject } from 'rxjs'
 import { PinRecord, Workspace } from './models'
+import { withLock } from './locks'
 
 /**
  * Persists workspaces in localStorage, which all Tabby windows share.
  *
  * The workspace list lives under one key and only changes on explicit user
- * actions. Pins live under one key per workspace, and only the window that
- * owns the workspace writes them, so windows never overwrite each other.
+ * actions (create, rename, recolor, delete, import). Things that change all the
+ * time have a key per workspace, written only by the window that has the
+ * workspace open, so windows never overwrite each other: its pins, and when it
+ * was last opened.
  *
  * Callers should not hold on to Workspace objects: another window may have
  * renamed or deleted the workspace since. Re-read by id before acting on one.
  */
 const LIST_KEY = 'tabbyWorkspaces.list'
 const PINS_PREFIX = 'tabbyWorkspaces.pins.'
+const OPENED_PREFIX = 'tabbyWorkspaces.opened.'
 const HANDOFF_KEY = 'tabbyWorkspaces.handoff'
 const HANDOFF_MAX_AGE = 30_000
+
+type Handoff = { id: string, at: number }
 
 @Injectable({ providedIn: 'root' })
 export class WorkspaceStore {
@@ -33,7 +39,13 @@ export class WorkspaceStore {
     }
 
     list (): Workspace[] {
-        return this.readArray<Workspace>(LIST_KEY).filter(x => x && typeof x.id === 'string' && typeof x.name === 'string')
+        return this.readArray<Workspace>(LIST_KEY)
+            .filter(x => x && typeof x.id === 'string' && typeof x.name === 'string')
+            .map(x => {
+                // Older versions kept lastOpenedAt in the list itself; the newer of the two wins
+                const opened = Number(window.localStorage.getItem(OPENED_PREFIX + x.id)) || 0
+                return opened > (x.lastOpenedAt ?? 0) ? { ...x, lastOpenedAt: opened } : x
+            })
     }
 
     get (id: string): Workspace | null {
@@ -65,6 +77,12 @@ export class WorkspaceStore {
     remove (id: string): void {
         this.write(LIST_KEY, this.list().filter(x => x.id !== id))
         window.localStorage.removeItem(PINS_PREFIX + id)
+        window.localStorage.removeItem(OPENED_PREFIX + id)
+    }
+
+    /** Records that the workspace was just opened (for the "recent first" order) */
+    markOpened (id: string): void {
+        window.localStorage.setItem(OPENED_PREFIX + id, String(Date.now()))
     }
 
     getPins (id: string): PinRecord[] {
@@ -75,23 +93,41 @@ export class WorkspaceStore {
         this.write(PINS_PREFIX + id, pins)
     }
 
-    /** Tells the next window that starts which workspace to load. */
-    setHandoff (id: string): void {
-        this.write(HANDOFF_KEY, { id, at: Date.now() })
+    /**
+     * Queues a workspace for the next window that starts. A queue, so opening several
+     * workspaces in quick succession gives each new window its own one.
+     */
+    async addHandoff (id: string): Promise<void> {
+        await withLock('handoff', () => {
+            this.write(HANDOFF_KEY, [...this.readHandoffs(), { id, at: Date.now() }])
+        })
     }
 
-    takeHandoff (): string | null {
-        let handoff: { id?: unknown, at?: unknown } | null = null
+    /** The oldest queued workspace, removed from the queue; null if there is none. */
+    async takeHandoff (): Promise<string | null> {
+        return withLock('handoff', () => {
+            const [first, ...rest] = this.readHandoffs()
+            if (rest.length) {
+                this.write(HANDOFF_KEY, rest)
+            } else {
+                window.localStorage.removeItem(HANDOFF_KEY)
+            }
+            return first?.id ?? null
+        })
+    }
+
+    /** Fresh, well-formed entries only; a broken or stale queue is simply ignored */
+    private readHandoffs (): Handoff[] {
+        let value: unknown = null
         try {
-            handoff = JSON.parse(window.localStorage.getItem(HANDOFF_KEY) ?? 'null')
+            value = JSON.parse(window.localStorage.getItem(HANDOFF_KEY) ?? 'null')
         } catch {
-            // A broken handoff is just ignored
+            // ignored
         }
-        window.localStorage.removeItem(HANDOFF_KEY)
-        if (typeof handoff?.id !== 'string' || typeof handoff.at !== 'number' || Date.now() - handoff.at > HANDOFF_MAX_AGE) {
-            return null
-        }
-        return handoff.id
+        // Older versions stored a single entry
+        const entries = Array.isArray(value) ? value : value ? [value] : []
+        return entries.filter((x: any): x is Handoff =>
+            typeof x?.id === 'string' && typeof x.at === 'number' && Date.now() - x.at <= HANDOFF_MAX_AGE)
     }
 
     /** Throws on a full quota, so callers can tell the user their changes weren't saved. */

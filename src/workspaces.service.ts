@@ -82,7 +82,7 @@ export class WorkspacesService {
         this.restoreRecoverTabsSetting()
 
         // A window opened by openWorkspace() in another window: load what it asked for
-        const handoffId = this.store.takeHandoff()
+        const handoffId = await this.store.takeHandoff()
         const handoff = handoffId ? this.store.get(handoffId) : null
         if (handoff) {
             await this.openWorkspace(handoff)
@@ -119,15 +119,12 @@ export class WorkspacesService {
             return
         }
         if ((await this.registry.openElsewhere()).has(workspace.id)) {
-            this.registry.requestFocus(workspace.id)
-            if (!this.current) {
-                this.closeWindowIfEmpty()
-            }
+            this.focusElsewhere(workspace.id)
         } else if (this.current) {
-            this.store.setHandoff(workspace.id)
+            await this.store.addHandoff(workspace.id)
             this.hostApp.newWindow()
-        } else if (!await this.session.attach(workspace.id)) {
-            this.notifications.info(`Workspace "${workspace.name}" no longer exists`, 'It was deleted in another window.')
+        } else {
+            await this.openHere(workspace)
         }
     }
 
@@ -137,7 +134,7 @@ export class WorkspacesService {
         if (this.current) {
             await this.openWorkspace(workspace)
         } else {
-            await this.session.attach(workspace.id) // brand new, so not open anywhere
+            await this.openHere(workspace) // brand new, so no other window has it
         }
     }
 
@@ -174,6 +171,29 @@ export class WorkspacesService {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /**
+     * Claims the workspace and loads it into this (empty) window. The claim is what makes
+     * this safe when another window tries to open the same workspace at the same moment:
+     * only one of them gets it, the other brings that window to the front.
+     */
+    private async openHere (workspace: Workspace): Promise<void> {
+        if (!await this.registry.claim(workspace.id)) {
+            this.focusElsewhere(workspace.id)
+            return
+        }
+        if (!await this.session.attach(workspace.id)) {
+            this.registry.unclaim()
+            this.notifications.info(`Workspace "${workspace.name}" no longer exists`, 'It was deleted in another window.')
+        }
+    }
+
+    private focusElsewhere (id: string): void {
+        this.registry.requestFocus(id)
+        if (!this.current) {
+            this.closeWindowIfEmpty()
+        }
+    }
 
     private update (id: string, changes: Partial<Workspace>): void {
         this.store.update(id, changes)
