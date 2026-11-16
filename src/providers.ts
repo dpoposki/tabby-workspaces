@@ -1,10 +1,11 @@
 import { Injectable } from '@angular/core'
 import {
-    AppService, BaseTabComponent, Command, CommandContext, CommandLocation, CommandProvider,
-    ConfigProvider, HotkeyDescription, HotkeyProvider, MenuItemOptions, TabContextMenuItemProvider,
+    AppService, BaseTabComponent, CLIEvent, CLIHandler, Command, CommandContext, CommandLocation, CommandProvider,
+    ConfigProvider, ConfigService, HotkeyDescription, HotkeyProvider, MenuItemOptions, TabContextMenuItemProvider,
 } from 'tabby-core'
 import { WorkspacesService } from './workspaces.service'
 import { isWslTab } from './terminal'
+import { WorkspacesLauncher } from './launcher'
 
 /** Right-click menu on a pinned tab: pin name, startup command, tmux. */
 @Injectable()
@@ -51,7 +52,7 @@ export class WorkspacesTabContextMenu extends TabContextMenuItemProvider {
 /** Toolbar badge (workspace color + initial) and command palette entries. */
 @Injectable()
 export class WorkspacesCommandProvider extends CommandProvider {
-    constructor (private workspaces: WorkspacesService) {
+    constructor (private workspaces: WorkspacesService, private launcher: WorkspacesLauncher, private config: ConfigService) {
         super()
     }
 
@@ -68,16 +69,87 @@ export class WorkspacesCommandProvider extends CommandProvider {
         badge.id = 'workspaces:menu'
         badge.locations = [CommandLocation.RightToolbar]
         badge.weight = -10
-        // Don't hold Tabby's command queue while the menu (and any prompt it opens) is up
-        badge.run = async () => { service.showMenu().catch(error => console.error('[workspaces]', error)) }
+        // Without a workspace the badge shows "?", and clicking it should just let you pick one.
+        // Don't hold Tabby's command queue while the menu (and any prompt it opens) is up.
+        badge.run = async () => {
+            (service.current ? service.showMenu() : service.showPicker()).catch(error => console.error('[workspaces]', error))
+        }
 
         const open = new Command()
         open.id = 'workspaces:open'
         open.label = 'Workspaces: Open another workspace'
-        open.run = async () => { service.showPicker('open').catch(error => console.error('[workspaces]', error)) }
-        return [badge, open]
+        open.run = async () => { service.showPicker().catch(error => console.error('[workspaces]', error)) }
+
+        const launcher = new Command()
+        launcher.id = 'workspaces:launcher'
+        launcher.label = 'Workspaces: Show launcher'
+        launcher.run = async () => this.launcher.show()
+
+        // Start page of a window without a workspace: one entry per recent workspace
+        // (like Chrome's profile picker), then the full picker
+        const settings = this.config.store.workspaces
+        const recent = service.current || !settings.startPageList ? [] : service.sortedWorkspaces().slice(0, START_PAGE_MAX_WORKSPACES)
+        const entries = recent.map((workspace, index) => {
+            const entry = new Command()
+            entry.id = `workspaces:start-page:${workspace.id}`
+            entry.label = workspace.name
+            entry.icon = badgeIcon(workspace.name, workspace.color)
+            entry.locations = [CommandLocation.StartPage]
+            entry.weight = 0
+            entry.run = async () => { service.openWorkspace(workspace).catch(error => console.error('[workspaces]', error)) }
+            return entry
+        })
+
+        const startPage = new Command()
+        startPage.id = 'workspaces:start-page'
+        startPage.label = recent.length ? 'All workspaces…' : 'Workspaces'
+        startPage.icon = START_PAGE_ICON
+        startPage.locations = [CommandLocation.StartPage]
+        startPage.weight = 0
+        startPage.run = async () => this.launcher.show()
+
+        return [
+            ...settings.toolbarBadge ? [badge] : [],
+            open, launcher, ...entries,
+            ...settings.startPageList ? [startPage] : [],
+        ]
     }
 }
+
+const START_PAGE_MAX_WORKSPACES = 8
+
+/**
+ * When Tabby starts, show the workspace launcher instead of the terminal it would
+ * auto-open. Runs just before tabby-local's AutoOpenTabCLIHandler (priority -1000);
+ * handlers for explicit CLI commands (`tabby run`, `tabby open`, ...) have higher
+ * priority and still win. With "Show on startup" off this does nothing, so Tabby
+ * starts as usual. Only the first window gets this event; second-instance launches
+ * and new windows already start empty.
+ */
+@Injectable()
+export class WorkspacesStartupCLIHandler extends CLIHandler {
+    firstMatchOnly = true
+    priority = -999.5
+
+    constructor (private config: ConfigService, private launcher: WorkspacesLauncher) {
+        super()
+    }
+
+    async handle (event: CLIEvent): Promise<boolean> {
+        // enableWelcomeTab: Tabby's own first-run screen gets priority
+        if (event.secondInstance || this.config.store.enableWelcomeTab || !this.launcher.showOnStartup) {
+            return false
+        }
+        this.launcher.show()
+        return true
+    }
+}
+
+// Same 16px stroke style as Tabby's own start page icons: stacked windows
+const START_PAGE_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round">
+    <rect x="4.5" y="1.5" width="10" height="8" rx="1.2"/>
+    <path d="M2.5 5.5v7.8c0 .7.5 1.2 1.2 1.2h7.8"/>
+</svg>`
 
 @Injectable()
 export class WorkspacesHotkeyProvider extends HotkeyProvider {
@@ -92,6 +164,12 @@ export class WorkspacesHotkeyProvider extends HotkeyProvider {
 @Injectable()
 export class WorkspacesConfigProvider extends ConfigProvider {
     defaults = {
+        workspaces: {
+            showLauncher: true,
+            startPageList: true,
+            toolbarBadge: true,
+            colorStripe: true,
+        },
         hotkeys: {
             'workspaces-open': ['Ctrl-Alt-N'],
             'workspaces-menu': ['Ctrl-Alt-W'],

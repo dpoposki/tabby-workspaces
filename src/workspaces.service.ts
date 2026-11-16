@@ -1,5 +1,6 @@
 import { Injectable, NgZone } from '@angular/core'
 import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
+import { Subject } from 'rxjs'
 import {
     AppService, BaseTabComponent, ConfigService, HostAppService, HostWindowService,
     NotificationsService, PlatformService, PromptModalComponent, SelectorOption,
@@ -21,6 +22,8 @@ const SAVE_INTERVAL_MS = 10_000
 export class WorkspacesService {
     /** Workspace shown in this window, or null for a plain (unsaved) window */
     current: Workspace | null = null
+    /** Fires when a workspace is loaded into this window */
+    readonly attached$ = new Subject<Workspace>()
 
     private meta = new WeakMap<BaseTabComponent, PinMeta>()
     /** Pins that could not be restored (e.g. their profile is gone); kept so they aren't silently lost */
@@ -59,6 +62,7 @@ export class WorkspacesService {
         this.app.tabOpened$.subscribe(tab => this.watchTab(tab))
         this.app.tabsChanged$.subscribe(() => this.scheduleSave())
         this.app.tabClosed$.subscribe(() => this.scheduleSave())
+        this.config.changed$.subscribe(() => this.applyWindowChrome())
         setInterval(() => this.scheduleSave(), SAVE_INTERVAL_MS)
 
         this.registry.focusRequested$.subscribe(() => this.zone.run(() => this.hostWindow.bringToFront()))
@@ -90,9 +94,9 @@ export class WorkspacesService {
             } else {
                 await this.attach(handoff)
             }
-            return
         }
-        await this.showPicker('startup')
+        // Otherwise the window starts as a plain window; the start page entry and the
+        // toolbar badge open the picker. Showing it here would block the window while it loads.
     }
 
     /** Tabby's own "restore tabs" only works for a single window and would fight with workspaces. */
@@ -106,14 +110,13 @@ export class WorkspacesService {
     // ---------------------------------------------------------------- picker & menu
 
     /**
-     * startup: shown when a window opens without a workspace; picking one loads it here.
-     * open:    "open another workspace"; picking one opens it in a new window
-     *          (or here, if this window has no workspace yet).
+     * Picking a workspace loads it into this window if this window has none yet,
+     * and opens it in a new window otherwise.
      */
-    async showPicker (mode: 'startup' | 'open'): Promise<void> {
+    async showPicker (): Promise<void> {
         const openElsewhere = await this.registry.openElsewhere()
         const workspaces = this.sortedWorkspaces()
-        type Choice = { kind: 'workspace', workspace: Workspace } | { kind: 'none' }
+        type Choice = { kind: 'workspace', workspace: Workspace } | { kind: 'manage' }
 
         const options: SelectorOption<Choice>[] = workspaces.map(workspace => {
             const isHere = workspace.id === this.current?.id
@@ -133,30 +136,32 @@ export class WorkspacesService {
             icon: 'fas fa-plus',
             callback: name => {
                 if (name?.trim()) {
-                    this.createWorkspace(name.trim(), mode).catch(e => this.notifications.error('Could not create workspace', String(e)))
+                    this.createWorkspace(name.trim()).catch(e => this.notifications.error('Could not create workspace', String(e)))
                 }
             },
         })
-        if (mode === 'startup') {
+        if (!this.current) {
+            // The badge opens this picker in a window without a workspace, so keep the menu reachable
             options.push({
-                name: 'Continue without a workspace',
-                description: 'Tabs in this window will not be saved',
-                icon: 'fas fa-times',
-                result: { kind: 'none' },
+                name: 'Manage workspaces…',
+                description: 'Delete, export, import',
+                icon: 'fas fa-cog',
+                result: { kind: 'manage' },
             })
         }
 
-        const title = mode === 'startup' ? 'Open workspace (type a name to create one)' : 'Open another workspace'
+        const title = this.current ? 'Open another workspace' : 'Open workspace (type a name to create one)'
         let choice: Choice | undefined
         try {
             choice = await this.selector.show(title, options)
         } catch {
             return // dismissed
         }
-        if (choice?.kind !== 'workspace') {
-            return
+        if (choice?.kind === 'manage') {
+            await this.showMenu()
+        } else if (choice?.kind === 'workspace') {
+            await this.openWorkspace(choice.workspace, openElsewhere)
         }
-        await this.openWorkspace(choice.workspace, openElsewhere)
     }
 
     async openWorkspace (workspace: Workspace, openElsewhere?: Set<string>): Promise<void> {
@@ -181,7 +186,7 @@ export class WorkspacesService {
 
     async showMenu (): Promise<void> {
         const options: SelectorOption<() => Promise<void>>[] = [
-            { name: 'Open another workspace…', icon: 'fas fa-window-restore', result: () => this.showPicker('open') },
+            { name: 'Open another workspace…', icon: 'fas fa-window-restore', result: () => this.showPicker() },
             { name: 'New workspace…', icon: 'fas fa-plus', result: () => this.promptNewWorkspace() },
         ]
         if (this.current) {
@@ -209,15 +214,16 @@ export class WorkspacesService {
     private async promptNewWorkspace (): Promise<void> {
         const name = await this.prompt('Workspace name')
         if (name) {
-            await this.createWorkspace(name, 'open')
+            await this.createWorkspace(name)
         }
     }
 
-    private async createWorkspace (name: string, mode: 'startup' | 'open'): Promise<void> {
-        const color = await this.pickColor(WORKSPACE_COLORS[this.store.list().length % WORKSPACE_COLORS.length].value)
+    /** Without a color, asks for one. */
+    async createWorkspace (name: string, color?: string): Promise<void> {
+        color ??= await this.pickColor(this.nextColor())
         const workspace: Workspace = { id: newId(), name, color, createdAt: Date.now() }
         this.store.upsert(workspace)
-        if (mode === 'startup' || !this.current) {
+        if (!this.current) {
             await this.attach(workspace)
         } else {
             await this.openWorkspace(workspace)
@@ -282,6 +288,7 @@ export class WorkspacesService {
         this.registry.currentId = workspace.id
         this.store.upsert(this.current)
         this.applyWindowChrome()
+        this.attached$.next(this.current)
 
         this.restoring = true
         this.unrestorable = []
@@ -522,7 +529,7 @@ export class WorkspacesService {
             this.styleElement = document.createElement('style')
             document.head.appendChild(this.styleElement)
         }
-        const color = this.current?.color
+        const color = this.config.store.workspaces?.colorStripe !== false ? this.current?.color : undefined
         this.styleElement.textContent = color
             ? `body::after { content: ''; position: fixed; left: 0; right: 0; top: 0; height: 3px;
                  background: ${color}; z-index: 100000; pointer-events: none; }`
@@ -544,7 +551,7 @@ export class WorkspacesService {
 
     // ---------------------------------------------------------------- export / import
 
-    private async exportWorkspaces (): Promise<void> {
+    async exportWorkspaces (): Promise<void> {
         await this.save()
         const data: ExportFile = {
             format: 'tabby-workspaces',
@@ -563,7 +570,7 @@ export class WorkspacesService {
         this.notifications.notice(`Exported ${data.workspaces.length} workspace(s)`)
     }
 
-    private async importWorkspaces (): Promise<void> {
+    async importWorkspaces (): Promise<void> {
         const [file] = await this.platform.startUpload({ multiple: false })
         if (!file) {
             return
@@ -634,7 +641,12 @@ export class WorkspacesService {
 
     // ---------------------------------------------------------------- helpers
 
-    private sortedWorkspaces (): Workspace[] {
+    /** Default color for the next new workspace, cycling through the palette */
+    nextColor (): string {
+        return WORKSPACE_COLORS[this.store.list().length % WORKSPACE_COLORS.length].value
+    }
+
+    sortedWorkspaces (): Workspace[] {
         return this.store.list().sort((a, b) => (b.lastOpenedAt ?? b.createdAt) - (a.lastOpenedAt ?? a.createdAt))
     }
 
