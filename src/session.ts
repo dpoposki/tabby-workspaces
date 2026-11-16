@@ -30,6 +30,9 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
     private restoring = false
     private closing = false
     private saveTimer: any = null
+    /** The save in progress, if any; saves never overlap (see save()) */
+    private saving: Promise<void> | null = null
+    private saveAgain = false
 
     constructor (
         private app: AppService,
@@ -218,6 +221,10 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
             return
         }
         clearTimeout(this.saveTimer)
+        // A save still running collected the tabs before they closed; make it run again
+        if (this.saving) {
+            this.saveAgain = true
+        }
         try {
             this.store.setPins(this.current.id, [...this.unrestorable])
         } catch (error) {
@@ -236,7 +243,34 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
         )
     }
 
+    /**
+     * Saves the pins now. Saves never run at the same time: one can take seconds (the WSL
+     * cwd lookup), and an older one finishing last would overwrite newer pins. A save
+     * requested meanwhile runs once more right after; the caller's promise resolves when
+     * the pins as they are now have been written.
+     */
     async save (): Promise<void> {
+        if (this.saving) {
+            this.saveAgain = true
+            while (this.saving) {
+                await this.saving
+            }
+            return
+        }
+        this.saving = (async () => {
+            try {
+                do {
+                    this.saveAgain = false
+                    await this.saveOnce()
+                } while (this.saveAgain)
+            } finally {
+                this.saving = null
+            }
+        })()
+        return this.saving
+    }
+
+    private async saveOnce (): Promise<void> {
         const workspace = this.current
         if (!workspace || this.restoring || this.closing || this.store.readOnly) {
             return

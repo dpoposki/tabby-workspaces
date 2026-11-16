@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core'
+import { Injectable, NgZone } from '@angular/core'
 import { Subject } from 'rxjs'
 import { PinRecord, Workspace } from './models'
 import { withLock } from './locks'
@@ -37,7 +37,7 @@ type Handoff = { id: string, at: number }
 
 @Injectable({ providedIn: 'root' })
 export class WorkspaceStore {
-    /** Another window changed the workspace list (fires outside the Angular zone) */
+    /** Another window changed the workspace list (fires inside the Angular zone) */
     readonly listChangedElsewhere$ = new Subject<void>()
     /** Stored data couldn't be read; the raw value was copied to `backupKey` */
     readonly corrupted$ = new Subject<{ key: string, backupKey: string }>()
@@ -47,11 +47,12 @@ export class WorkspaceStore {
      */
     readonly newerSchema: number | null
 
-    constructor () {
+    constructor (zone: NgZone) {
         this.newerSchema = this.migrate()
+        // An event from another window: re-enter Angular here, so subscribers don't have to
         window.addEventListener('storage', event => {
             if (event.key === LIST_KEY) {
-                this.listChangedElsewhere$.next()
+                zone.run(() => this.listChangedElsewhere$.next())
             }
         })
     }

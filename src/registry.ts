@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core'
+import { Injectable, NgZone } from '@angular/core'
 import { Subject } from 'rxjs'
 import { heldLocks, holdLock, locksSupported } from './locks'
 
@@ -22,7 +22,7 @@ const LOCK_PREFIX = 'workspace:'
  */
 @Injectable({ providedIn: 'root' })
 export class WindowRegistry {
-    /** Fires (outside the Angular zone) when another window asks this one to focus */
+    /** Fires (inside the Angular zone) when another window asks this one to focus */
     readonly focusRequested$ = new Subject<void>()
 
     /** The workspace this window has claimed (a window holds at most one, for its lifetime) */
@@ -31,8 +31,9 @@ export class WindowRegistry {
     private channel = new BroadcastChannel('tabby-workspaces')
     private pendingQueries = new Map<string, Set<string>>()
 
-    constructor () {
-        this.channel.onmessage = event => this.onMessage(event.data as Message)
+    constructor (private zone: NgZone) {
+        // Messages from other windows: re-enter Angular here, so subscribers don't have to
+        this.channel.onmessage = event => this.zone.run(() => this.onMessage(event.data as Message))
     }
 
     /** Claims the workspace for this window; false if another window has it. */

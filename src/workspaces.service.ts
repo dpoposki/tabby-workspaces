@@ -1,4 +1,4 @@
-import { Injectable, NgZone } from '@angular/core'
+import { Injectable } from '@angular/core'
 import { AppService, ConfigService, HostAppService, HostWindowService, NotificationsService } from 'tabby-core'
 import { newId, Workspace, WORKSPACE_COLORS } from './models'
 import { WorkspaceStore } from './store'
@@ -32,7 +32,6 @@ export class WorkspacesService {
         private session: WorkspaceSession,
         private chrome: WindowChrome,
         private compat: TabbyCompat,
-        private zone: NgZone,
         private errors: ErrorReporter,
     ) { }
 
@@ -63,18 +62,18 @@ export class WorkspacesService {
         this.session.init()
         this.chrome.init()
 
-        this.registry.focusRequested$.subscribe(() => this.zone.run(() => this.hostWindow.bringToFront()))
-        this.store.listChangedElsewhere$.subscribe(() => this.zone.run(() => this.session.reload()))
+        this.registry.focusRequested$.subscribe(() => this.hostWindow.bringToFront())
+        this.store.listChangedElsewhere$.subscribe(() => this.session.reload())
         if (this.store.newerSchema) {
             setTimeout(() => this.notifications.error(
                 'Workspaces: saved by a newer plugin version',
                 'Your workspaces open as usual, but changes aren\'t saved until you update the plugin.',
             ), 3000)
         }
-        this.store.corrupted$.subscribe(({ key, backupKey }) => this.zone.run(() => this.notifications.error(
+        this.store.corrupted$.subscribe(({ key, backupKey }) => this.notifications.error(
             'Workspaces: stored data was unreadable',
             `It was set aside under "${backupKey}" in Tabby's local storage (was "${key}").`,
-        )))
+        ))
 
         this.app.ready$.subscribe(() => {
             setTimeout(() => this.onAppReady().catch(error => this.errors.report('Workspaces: startup failed', error)), STARTUP_DELAY_MS)

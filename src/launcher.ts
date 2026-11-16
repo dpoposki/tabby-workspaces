@@ -10,8 +10,10 @@ import { WorkspaceDialogs } from './dialogs'
 import { ErrorReporter } from './errors'
 import { workspacesSettings } from './config'
 
+import STYLES from './launcher.css'
+
 const ROOT_ID = 'tabby-workspaces-launcher'
-/** Fade-out duration; the CSS transition uses the same value */
+/** Fade-out duration; passed to the CSS as --wl-hide-duration */
 const HIDE_MS = 160
 /** Cards that get a 1–9 key */
 const SHORTCUT_CARDS = 9
@@ -62,7 +64,7 @@ export class WorkspacesLauncher {
             this.session.attached$.subscribe(() => this.hide())
             this.app.tabsChanged$.subscribe(() => this.app.tabs.length && this.hide())
             // Renamed, recolored, added or deleted in another window: never show stale cards
-            this.store.listChangedElsewhere$.subscribe(() => this.zone.run(() => this.refresh()))
+            this.store.listChangedElsewhere$.subscribe(() => this.refresh())
         }
         installStyles()
         this.root = this.build()
@@ -154,6 +156,7 @@ export class WorkspacesLauncher {
     private build (): HTMLElement {
         const root = el('div', 'wl-root')
         root.id = ROOT_ID
+        root.style.setProperty('--wl-hide-duration', `${HIDE_MS}ms`)
         root.tabIndex = -1
         root.addEventListener('keydown', event => this.onKeyDown(event))
 
@@ -390,147 +393,3 @@ function installStyles (): void {
     style.textContent = STYLES
     document.head.appendChild(style)
 }
-
-const STYLES = `
-.wl-root {
-    --wl-fg: var(--theme-fg, #e6e6e6);
-    --wl-bg: var(--theme-bg, #1b1d23);
-    --wl-card: color-mix(in srgb, var(--wl-fg) 6%, transparent);
-    --wl-card-hover: color-mix(in srgb, var(--wl-fg) 11%, transparent);
-    --wl-muted: color-mix(in srgb, var(--wl-fg) 58%, transparent);
-    --wl-line: color-mix(in srgb, var(--wl-fg) 14%, transparent);
-    position: fixed; inset: 0; z-index: 1040;
-    display: flex; flex-direction: column;
-    color: var(--wl-fg);
-    background:
-        radial-gradient(1200px 600px at 50% -10%, color-mix(in srgb, var(--theme-primary, #3b82f6) 14%, transparent), transparent 70%),
-        var(--wl-bg);
-    font-family: inherit;
-    outline: none;
-    animation: wl-fade .2s ease-out;
-}
-.wl-root.wl-leaving { animation: wl-fade-out ${HIDE_MS}ms ease-in forwards; pointer-events: none; }
-.wl-drag { flex: none; height: 38px; -webkit-app-region: drag; }
-.wl-main {
-    flex: auto; overflow-y: auto; padding: 24px 32px 40px;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-}
-.wl-title { margin: 0 0 8px; font-size: 30px; font-weight: 500; letter-spacing: -.01em; text-align: center; }
-.wl-subtitle { margin: 0 0 44px; color: var(--wl-muted); font-size: 14px; text-align: center; }
-.wl-grid {
-    display: flex; flex-wrap: wrap; justify-content: center; gap: 20px;
-    max-width: 1000px;
-}
-.wl-card {
-    position: relative; box-sizing: border-box;
-    width: 176px; height: 196px; padding: 22px 14px 16px;
-    display: flex; flex-direction: column; align-items: center;
-    border: 1px solid transparent; border-radius: 8px;
-    background: var(--wl-card); color: inherit; font: inherit; text-align: center;
-    cursor: pointer; outline: none;
-    transition: background .15s, border-color .15s, transform .15s, box-shadow .15s;
-    animation: wl-rise .28s ease-out backwards; animation-delay: var(--wl-delay, 0ms);
-}
-.wl-card:hover, .wl-card:focus-visible {
-    background: var(--wl-card-hover);
-    border-color: color-mix(in srgb, var(--wl-color, var(--wl-fg)) 70%, transparent);
-    transform: translateY(-3px);
-    box-shadow: 0 10px 28px -12px color-mix(in srgb, var(--wl-color, #000) 60%, transparent);
-}
-.wl-card:active { transform: translateY(-1px); }
-.wl-avatar {
-    flex: none; width: 84px; height: 84px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    background: var(--wl-color, #6b7280); color: #fff;
-    font-size: 36px; font-weight: 600; line-height: 1;
-    box-shadow: inset 0 -6px 14px rgba(0,0,0,.18);
-    margin-bottom: 16px;
-}
-.wl-name {
-    max-width: 100%; font-size: 15px; font-weight: 500;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.wl-meta { margin-top: 5px; font-size: 12px; color: var(--wl-muted); white-space: nowrap; }
-.wl-open .wl-meta::before {
-    content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; vertical-align: 1px;
-    border-radius: 50%; background: var(--theme-success, #22c55e);
-}
-.wl-key {
-    position: absolute; top: 10px; left: 12px;
-    font-size: 11px; color: var(--wl-muted); opacity: 0; transition: opacity .15s;
-}
-.wl-card:hover .wl-key, .wl-card:focus-visible .wl-key { opacity: 1; }
-.wl-more {
-    position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 6px;
-    display: flex; align-items: center; justify-content: center;
-    color: var(--wl-muted); opacity: 0; transition: opacity .15s, background .15s;
-}
-.wl-card:hover .wl-more, .wl-card:focus-visible .wl-more { opacity: 1; }
-.wl-more:hover { background: var(--wl-card-hover); color: var(--wl-fg); }
-.wl-current { border-color: color-mix(in srgb, var(--wl-color) 45%, transparent); }
-.wl-current .wl-meta { color: var(--wl-fg); }
-.wl-current .wl-meta::before {
-    content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; vertical-align: 1px;
-    border-radius: 50%; background: var(--wl-color);
-}
-.wl-close {
-    position: absolute; top: 46px; right: 20px; z-index: 1; width: 32px; height: 32px; border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-    border: none; background: transparent; color: var(--wl-muted); cursor: pointer;
-}
-.wl-close:hover, .wl-close:focus-visible { background: var(--wl-card-hover); color: var(--wl-fg); outline: none; }
-.wl-add { background: transparent; border: 1px dashed var(--wl-line); }
-.wl-add .wl-avatar {
-    background: transparent; border: 1px dashed var(--wl-line); box-shadow: none;
-    color: var(--wl-muted); font-weight: 300; font-size: 42px;
-}
-.wl-add:hover .wl-avatar, .wl-add:focus-visible .wl-avatar { color: var(--wl-fg); }
-.wl-form { cursor: default; padding: 16px 12px 12px; gap: 9px; border-color: color-mix(in srgb, var(--wl-color) 70%, transparent); }
-.wl-form:hover { transform: none; }
-.wl-form .wl-avatar { width: 52px; height: 52px; font-size: 22px; margin: 0; transition: background .15s; }
-.wl-input {
-    width: 100%; box-sizing: border-box; padding: 6px 9px; border-radius: 8px;
-    border: 1px solid var(--wl-line); background: color-mix(in srgb, var(--wl-bg) 70%, transparent);
-    color: inherit; font: inherit; font-size: 13px; outline: none; text-align: center;
-}
-.wl-input:focus { border-color: var(--wl-color); }
-.wl-swatches { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; }
-.wl-swatch {
-    width: 14px; height: 14px; padding: 0; border-radius: 50%; border: none; cursor: pointer;
-    outline: 2px solid transparent; outline-offset: 1px;
-}
-.wl-swatch.wl-selected, .wl-swatch:focus-visible { outline-color: var(--wl-fg); }
-.wl-create {
-    margin-top: auto; width: 100%; padding: 5px; border: none; border-radius: 8px; cursor: pointer;
-    background: var(--wl-color); color: #fff; font: inherit; font-size: 13px; font-weight: 500;
-}
-.wl-create:hover { filter: brightness(1.1); }
-.wl-footer {
-    flex: none; display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 24px; border-top: 1px solid var(--wl-line);
-}
-.wl-guest {
-    display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 8px;
-    border: none; background: transparent; color: var(--wl-muted); font: inherit; font-size: 13px; cursor: pointer;
-}
-.wl-guest:hover, .wl-guest:focus-visible { background: var(--wl-card-hover); color: var(--wl-fg); outline: none; }
-.wl-toggle { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 13px; color: var(--wl-muted); cursor: pointer; user-select: none; }
-.wl-toggle input { position: absolute; opacity: 0; pointer-events: none; }
-.wl-switch {
-    position: relative; width: 32px; height: 18px; border-radius: 9px;
-    background: var(--wl-line); transition: background .15s;
-}
-.wl-switch::after {
-    content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
-    background: #fff; transition: transform .15s;
-}
-.wl-toggle input:checked + .wl-switch { background: var(--theme-primary, #3b82f6); }
-.wl-toggle input:checked + .wl-switch::after { transform: translateX(14px); }
-.wl-toggle input:focus-visible + .wl-switch { outline: 2px solid var(--wl-fg); outline-offset: 2px; }
-@keyframes wl-fade { from { opacity: 0 } }
-@keyframes wl-fade-out { to { opacity: 0 } }
-@keyframes wl-rise { from { opacity: 0; transform: translateY(8px) } }
-@media (prefers-reduced-motion: reduce) {
-    .wl-root, .wl-card { animation: none !important; transition: none !important; }
-}
-`

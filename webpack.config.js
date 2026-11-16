@@ -12,7 +12,11 @@ module.exports = {
     optimization: { minimize: false },
     resolve: { extensions: ['.ts', '.js'] },
     module: {
-        rules: [{ test: /\.ts$/, loader: 'ts-loader' }],
+        rules: [
+            { test: /\.ts$/, loader: 'ts-loader' },
+            // Stylesheets are bundled as plain strings (see launcher.ts)
+            { test: /\.css$/, type: 'asset/source' },
+        ],
     },
     // Everything Tabby already ships is provided at runtime
     externals: [
