@@ -17,6 +17,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # GitHub's hosted macOS runners are sometimes not available at all; don't fail the run for that.
+    continue-on-error: ${{ matrix.os == 'macos-latest' }}
     timeout-minutes: 15
     steps:
       - name: Checkout code
