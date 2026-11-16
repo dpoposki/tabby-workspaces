@@ -9,8 +9,8 @@ import { ExportFile, newId, PinMeta, PinRecord, Workspace, WORKSPACE_COLORS } fr
 import { LIST_KEY, WorkspaceStore } from './store'
 import { WindowRegistry } from './registry'
 import {
-    buildTmuxCommand, getTerminal, getWslTarget, killTmuxSession,
-    tmuxSessionName, waitForPrompt, waitForSession,
+    buildTmuxCommand, getTerminal, getWslTarget, killTmuxSession, lookupWslCwds,
+    tagWslShells, tmuxSessionName, waitForPrompt, waitForSession, wslUncPath,
 } from './terminal'
 
 const SAVE_DEBOUNCE_MS = 800
@@ -52,6 +52,7 @@ export class WorkspacesService {
         }
         this.initialized = true
 
+        tagWslShells()
         this.patchAppService()
         this.patchWindowTitle()
 
@@ -438,14 +439,24 @@ export class WorkspacesService {
         if (!workspace || this.restoring || this.closing) {
             return
         }
+        const pinnedTabs = this.app.tabs.filter(x => x.pinned)
+        const wslCwds = await lookupWslCwds(pinnedTabs.map(x => getTerminal(x)))
         const pins: PinRecord[] = []
-        for (const tab of this.app.tabs.filter(x => x.pinned)) {
+        for (const tab of pinnedTabs) {
             const meta = this.getMeta(tab)
             const token = await this.tabRecovery.getFullRecoveryToken(tab, { includeState: false })
             if (!token) {
                 continue
             }
             token.tabPinned = true
+            const terminal = getTerminal(tab)
+            const options = terminalTokenOf(token)?.profile?.options
+            const wslCwd = wslCwds.get(terminal)
+            if (wslCwd && options) {
+                options.cwd = wslCwd
+            } else {
+                normalizeWslCwd(options, getWslTarget(terminal))
+            }
             pins.push({ id: meta.id, token, startupCommand: meta.startupCommand, tmux: meta.tmux })
         }
         // The window may have started closing while tokens were collected
@@ -659,6 +670,40 @@ export class WorkspacesService {
             this.hostWindow.close()
         }
     }
+}
+
+/**
+ * A top-level tab's token is a split container ({ type: 'app:split-tab', children: [...] });
+ * the terminal's own token (with the profile and cwd) is its first leaf, matching getTerminal().
+ */
+function terminalTokenOf (token: any): any | null {
+    if (!token) {
+        return null
+    }
+    if (token.profile) {
+        return token
+    }
+    for (const child of token.children ?? []) {
+        const leaf = terminalTokenOf(child)
+        if (leaf) {
+            return leaf
+        }
+    }
+    return null
+}
+
+/**
+ * Fallback when the /proc lookup can't resolve a tab: a shell that reports its cwd itself
+ * (OSC 1337 CurrentDir) reports a Linux path, which Tabby only maps to a Windows path when
+ * the profile has an fsBase. Store it as \\wsl.localhost\<distro>\... so it survives restore.
+ */
+function normalizeWslCwd (options: any, target: { args: string[] } | null): void {
+    const cwd: unknown = options?.cwd
+    const distro = target?.args[1]
+    if (typeof cwd !== 'string' || !cwd.startsWith('/') || options.fsBase || !distro) {
+        return
+    }
+    options.cwd = wslUncPath(distro, cwd)
 }
 
 function concat (chunks: Uint8Array[]): Uint8Array {

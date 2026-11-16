@@ -27,6 +27,7 @@ You can change the hotkeys under Settings → Hotkeys ("Workspaces: …").
 
 ### Behaviour
 - Pinned tabs are saved continuously: profile, working directory, name and startup command.
+- **WSL working directory** works without any shell setup. Tabby itself can't see where a WSL shell has `cd`'d (it only owns `wsl.exe`), so the plugin starts each WSL shell with a `TABBY_WORKSPACES_TAB` id (passed in via `WSLENV`) and, when saving, reads that shell's cwd from `/proc` with one `wsl.exe` call per distro. For tmux pins this is the folder tmux was attached from; tmux keeps its own panes' folders.
 - Unpinned tabs live until you close the window, just like in Chrome.
 - Unpinning a tab keeps it open, but it won't come back next time.
 - A workspace can be open in only one window. Picking it again brings its existing window to the front.
