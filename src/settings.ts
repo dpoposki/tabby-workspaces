@@ -1,5 +1,5 @@
 import { Component, Injectable } from '@angular/core'
-import { ConfigService } from 'tabby-core'
+import { ConfigService, HostAppService, Platform } from 'tabby-core'
 import { SettingsTabProvider } from 'tabby-settings'
 import { WorkspacesService } from './workspaces.service'
 
@@ -40,6 +40,14 @@ import { WorkspacesService } from './workspaces.service'
             <toggle [(ngModel)]="config.store.workspaces.colorStripe" (ngModelChange)="config.save()"></toggle>
         </div>
 
+        <div class="form-line" *ngIf="taskbarSupported">
+            <div class="header">
+                <div class="title">Taskbar icon</div>
+                <div class="description">Each workspace window gets its own taskbar button, with the workspace's color and initial on the Tabby icon. Turning it off applies to new windows</div>
+            </div>
+            <toggle [(ngModel)]="config.store.workspaces.taskbarIcon" (ngModelChange)="config.save()"></toggle>
+        </div>
+
         <div class="form-line">
             <div class="header">
                 <div class="title">Backup</div>
@@ -64,7 +72,12 @@ import { WorkspacesService } from './workspaces.service'
     `,
 })
 export class WorkspacesSettingsTabComponent {
-    constructor (public config: ConfigService, public workspaces: WorkspacesService) { }
+    /** macOS has one Dock icon per app; windows are told apart by their title there */
+    taskbarSupported: boolean
+
+    constructor (public config: ConfigService, public workspaces: WorkspacesService, hostApp: HostAppService) {
+        this.taskbarSupported = hostApp.platform !== Platform.macOS
+    }
 }
 
 @Injectable()

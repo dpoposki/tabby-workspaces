@@ -9,6 +9,7 @@ import {
 import { ExportFile, newId, PinMeta, PinRecord, Workspace, WORKSPACE_COLORS } from './models'
 import { LIST_KEY, WorkspaceStore } from './store'
 import { WindowRegistry } from './registry'
+import { TaskbarIdentity } from './taskbar'
 import {
     buildTmuxCommand, getTerminal, getWslTarget, killTmuxSession, lookupWslCwds,
     tagWslShells, tmuxSessionName, waitForPrompt, waitForSession, wslUncPath,
@@ -33,6 +34,7 @@ export class WorkspacesService {
     private saveTimer: any = null
     private styleElement: HTMLStyleElement | null = null
     private initialized = false
+    private taskbar: TaskbarIdentity
 
     constructor (
         private app: AppService,
@@ -47,7 +49,9 @@ export class WorkspacesService {
         private store: WorkspaceStore,
         private registry: WindowRegistry,
         private zone: NgZone,
-    ) { }
+    ) {
+        this.taskbar = new TaskbarIdentity(hostApp, hostWindow, platform)
+    }
 
     init (): void {
         if (this.initialized) {
@@ -574,6 +578,8 @@ export class WorkspacesService {
             : ''
         const tab = this.app.activeTab
         this.hostWindow.setTitle(tab ? tab.customTitle || tab.title : undefined)
+        this.taskbar.apply(this.current, this.config.store.workspaces?.taskbarIcon !== false)
+            .catch(error => console.error('[workspaces] taskbar icon failed', error))
     }
 
     private onListChangedElsewhere (): void {

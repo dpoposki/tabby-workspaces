@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core'
 import {
     AppService, BaseTabComponent, CLIEvent, CLIHandler, Command, CommandContext, CommandLocation, CommandProvider,
-    ConfigProvider, ConfigService, HotkeyDescription, HotkeyProvider, MenuItemOptions, TabContextMenuItemProvider,
+    ConfigProvider, ConfigService, HotkeyDescription, HotkeyProvider, MenuItemOptions, Platform, TabContextMenuItemProvider,
 } from 'tabby-core'
 import { WorkspacesService } from './workspaces.service'
 import { isWslTab } from './terminal'
@@ -166,10 +166,21 @@ export class WorkspacesConfigProvider extends ConfigProvider {
             startPageList: true,
             toolbarBadge: true,
             colorStripe: true,
+            taskbarIcon: true,
         },
         hotkeys: {
             'workspaces-open': ['Ctrl-Alt-N'],
             'workspaces-menu': ['Ctrl-Alt-W'],
+        },
+    }
+
+    // Tabby's own macOS shortcuts use ⌘ (e.g. ⌘-⌥-arrows for panes)
+    platformDefaults = {
+        [Platform.macOS]: {
+            hotkeys: {
+                'workspaces-open': ['⌘-⌥-N'],
+                'workspaces-menu': ['⌘-⌥-W'],
+            },
         },
     }
 }
