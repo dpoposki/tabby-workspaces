@@ -17,6 +17,33 @@
     animation: wl-fade .2s ease-out;
 }
 .wl-root.wl-leaving { animation: wl-fade-out var(--wl-hide-duration) ease-in forwards; pointer-events: none; }
+.wl-sheet { position: relative; flex: auto; min-height: 0; display: flex; flex-direction: column; }
+/* Over a window with tabs: a centered panel above the dimmed window */
+.wl-root.wl-panel {
+    align-items: center; justify-content: center; padding: 40px 24px 24px;
+    background: color-mix(in srgb, #000 45%, transparent);
+    backdrop-filter: blur(2px);
+}
+.wl-panel .wl-sheet {
+    flex: none; box-sizing: border-box; width: min(880px, 100%); max-height: min(660px, 100%);
+    border: 1px solid var(--wl-line); border-radius: 12px; overflow: hidden;
+    background:
+        radial-gradient(900px 420px at 50% -20%, color-mix(in srgb, var(--theme-primary, #3b82f6) 14%, transparent), transparent 70%),
+        var(--wl-bg);
+    box-shadow: 0 24px 70px -18px rgba(0,0,0,.65);
+    animation: wl-pop .2s ease-out;
+}
+.wl-panel .wl-main { padding: 34px 28px 26px; justify-content: flex-start; }
+.wl-panel .wl-title { font-size: 24px; }
+.wl-panel .wl-subtitle { margin-bottom: 28px; }
+.wl-panel .wl-grid { gap: 16px; }
+.wl-panel .wl-card { width: 152px; height: 172px; padding-top: 18px; }
+.wl-panel .wl-avatar { width: 68px; height: 68px; font-size: 30px; margin-bottom: 14px; }
+/* The Add form needs the full card size for its name field and colors */
+.wl-panel .wl-form { width: 176px; height: 196px; padding-top: 16px; }
+.wl-panel .wl-form .wl-avatar { width: 52px; height: 52px; font-size: 22px; margin: 0; }
+.wl-panel .wl-close { top: 10px; right: 10px; }
+.wl-panel .wl-footer { padding: 10px 16px; }
 .wl-drag { flex: none; height: 38px; -webkit-app-region: drag; }
 .wl-main {
     flex: auto; overflow-y: auto; padding: 24px 32px 40px;
@@ -137,6 +164,7 @@
 @keyframes wl-fade { from { opacity: 0 } }
 @keyframes wl-fade-out { to { opacity: 0 } }
 @keyframes wl-rise { from { opacity: 0; transform: translateY(8px) } }
+@keyframes wl-pop { from { opacity: 0; transform: scale(.97) } }
 @media (prefers-reduced-motion: reduce) {
-    .wl-root, .wl-card { animation: none !important; transition: none !important; }
+    .wl-root, .wl-card, .wl-sheet { animation: none !important; transition: none !important; }
 }

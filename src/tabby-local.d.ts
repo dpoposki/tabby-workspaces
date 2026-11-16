@@ -17,3 +17,11 @@ declare module 'tabby-settings' {
         getComponentType (): any
     }
 }
+
+// Shipped with Tabby (no typings installed); only the screen API is used.
+declare module '@electron/remote' {
+    export const screen: {
+        getAllDisplays (): { workArea: import('./tabby-compat').Bounds }[]
+        getDisplayMatching (bounds: import('./tabby-compat').Bounds): { workArea: import('./tabby-compat').Bounds }
+    }
+}

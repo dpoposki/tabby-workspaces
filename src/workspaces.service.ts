@@ -7,6 +7,7 @@ import { WindowRegistry } from './registry'
 import { WorkspaceSession } from './session'
 import { WindowChrome } from './window-chrome'
 import { TabbyCompat } from './tabby-compat'
+import { WindowPlacement } from './window-placement'
 
 /** Lets Tabby finish its own startup before a handed-off workspace is restored */
 const STARTUP_DELAY_MS = 300
@@ -35,6 +36,7 @@ export class WorkspacesService {
         private session: WorkspaceSession,
         private chrome: WindowChrome,
         private compat: TabbyCompat,
+        private placement: WindowPlacement,
         private errors: ErrorReporter,
     ) { }
 
@@ -52,7 +54,10 @@ export class WorkspacesService {
         const failed = this.compat.install({
             afterPin: (tab, wasPinned) => this.session.afterPin(tab, wasPinned),
             afterUnpin: () => this.session.afterUnpin(),
-            beforeCloseWindow: () => this.session.beforeCloseWindow(),
+            beforeCloseWindow: () => {
+                this.placement.save()
+                return this.session.beforeCloseWindow()
+            },
             afterCloseWindow: cancelled => this.session.afterCloseWindow(cancelled),
             decorateTitle: title => this.chrome.decorateTitle(title),
         })
@@ -64,6 +69,7 @@ export class WorkspacesService {
         }
         this.session.init()
         this.chrome.init()
+        this.placement.init()
 
         this.registry.focusRequested$.subscribe(() => this.hostWindow.bringToFront())
         this.store.listChangedElsewhere$.subscribe(() => this.session.reload())
@@ -184,6 +190,7 @@ export class WorkspacesService {
             return false
         }
         this.store.remove(id)
+        this.placement.forget(id)
         return true
     }
 

@@ -9,6 +9,7 @@ import { WorkspaceSession } from './session'
 import { WorkspaceDialogs } from './dialogs'
 import { ErrorReporter } from './errors'
 import { workspacesSettings } from './config'
+import { WindowPlacement } from './window-placement'
 
 import STYLES from './launcher.css'
 
@@ -24,10 +25,10 @@ function cardDelay (index: number): string {
 }
 
 /**
- * Full-window workspace chooser, like Chrome's profile picker: one big card per
- * workspace, an "Add" card, "Guest mode" (a plain window) and a "Show on startup" switch.
- * Shown over the first window at startup and from the toolbar badge; plain DOM so it
- * can appear before anything else.
+ * Workspace chooser, like Chrome's profile picker: one big card per workspace, an "Add"
+ * card, "Guest mode" (a plain window) and a "Show on startup" switch. It fills an empty
+ * window (at startup, a new window); over a window with tabs it's a centered panel above
+ * the dimmed window. Plain DOM so it can appear before anything else.
  */
 @Injectable({ providedIn: 'root' })
 export class WorkspacesLauncher {
@@ -46,12 +47,21 @@ export class WorkspacesLauncher {
         private session: WorkspaceSession,
         private dialogs: WorkspaceDialogs,
         private store: WorkspaceStore,
+        private placement: WindowPlacement,
         private zone: NgZone,
         private errors: ErrorReporter,
     ) { }
 
     get showOnStartup (): boolean {
         return workspacesSettings(this.config).showLauncher
+    }
+
+    /** The launcher in Tabby's first window, made small and centered like Chrome's profile picker */
+    showAtStartup (): void {
+        if (!this.root) {
+            this.placement.enterCompact()
+        }
+        this.show()
     }
 
     show (): void {
@@ -73,10 +83,17 @@ export class WorkspacesLauncher {
         this.markOpenElsewhere().catch(() => null)
     }
 
-    hide (): void {
+    /**
+     * `restoreWindow`: a compact startup window grows back; not when a workspace is being
+     * opened, which puts the window where that workspace had it.
+     */
+    hide (restoreWindow = true): void {
         const root = this.root
         if (!root) {
             return
+        }
+        if (restoreWindow) {
+            this.placement.leaveCompact()
         }
         this.root = null
         this.grid = null
@@ -88,13 +105,24 @@ export class WorkspacesLauncher {
 
     /** On this window's own card it simply closes the launcher (openWorkspace does nothing then) */
     private open (workspace: Workspace): void {
-        this.hide()
-        this.run(() => this.service.openWorkspace(workspace))
+        this.hide(false)
+        this.runThenRestoreWindow(() => this.service.openWorkspace(workspace))
     }
 
     private create (name: string, color: string): void {
-        this.hide()
-        this.run(() => this.service.createWorkspace(name, color))
+        this.hide(false)
+        this.runThenRestoreWindow(() => this.service.createWorkspace(name, color))
+    }
+
+    /** If the workspace didn't open here after all, the compact window still grows back */
+    private runThenRestoreWindow (action: () => Promise<void>): void {
+        this.run(async () => {
+            try {
+                await action()
+            } finally {
+                this.placement.leaveCompact()
+            }
+        })
     }
 
     /** Plain Tabby: a terminal with no workspace, nothing saved */
@@ -160,14 +188,19 @@ export class WorkspacesLauncher {
         root.tabIndex = -1
         root.addEventListener('keydown', event => this.onKeyDown(event))
 
-        root.appendChild(el('div', 'wl-drag'))
+        const sheet = el('div', 'wl-sheet')
+        root.appendChild(sheet)
         if (this.session.current || this.app.tabs.length) {
-            // Opened over a window that has content: make the way back obvious
+            // Over a window that has content: a panel, with an obvious way back
+            root.classList.add('wl-panel')
+            root.addEventListener('mousedown', event => event.target === root && this.hide())
             const close = el('button', 'wl-close') as HTMLButtonElement
             close.innerHTML = CLOSE_ICON
             close.title = 'Back to this window (Esc)'
             close.addEventListener('click', () => this.hide())
-            root.appendChild(close)
+            sheet.appendChild(close)
+        } else {
+            sheet.appendChild(el('div', 'wl-drag'))
         }
 
         const main = el('div', 'wl-main')
@@ -177,7 +210,7 @@ export class WorkspacesLauncher {
         this.grid = el('div', 'wl-grid')
         this.renderCards(this.grid)
         main.appendChild(this.grid)
-        root.appendChild(main)
+        sheet.appendChild(main)
 
         const footer = el('div', 'wl-footer')
         const guest = el('button', 'wl-guest')
@@ -197,7 +230,7 @@ export class WorkspacesLauncher {
         toggle.appendChild(el('span', '', 'Show on startup'))
         toggle.title = 'When off, Tabby starts with a plain terminal as usual'
         footer.appendChild(toggle)
-        root.appendChild(footer)
+        sheet.appendChild(footer)
 
         return root
     }

@@ -155,14 +155,14 @@ export class WorkspacesStartupCLIHandler extends CLIHandler {
             // Not awaited: the workspace opens once Tabby's startup is done. If it can't
             // (already open in another window), the launcher shows instead.
             this.service.openLastOnStartup()
-                .then(opened => opened || this.launcher.show())
+                .then(opened => opened || this.launcher.showAtStartup())
                 .catch(error => {
                     this.errors.report('Could not open the last workspace', error)
-                    this.launcher.show()
+                    this.launcher.showAtStartup()
                 })
             return true
         }
-        this.launcher.show()
+        this.launcher.showAtStartup()
         return true
     }
 }

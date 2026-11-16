@@ -12,6 +12,7 @@ Chrome-style workspaces for the [Tabby](https://tabby.sh) terminal. Each workspa
 - **[WSL working directory](#wsl-working-directory)**: WSL tabs reopen in the folder you `cd`'d to, without any shell setup
 - **[Persistent tmux sessions](#persistent-tmux-sessions)**: a WSL, SSH or macOS/Linux pin can attach to a tmux session that survives closing the window
 - **[SSH and serial pins](#ssh-and-serial-pins)**: they reconnect when the workspace opens, and run their startup command once logged in
+- **[Window size per workspace](#window-size-per-workspace)**: each workspace's window comes back where it was
 - **[Workspaces on the start page](#start-page)**: empty windows list your recent workspaces
 - **[Own taskbar icon per workspace](#taskbar-icons)**: on Windows, each workspace gets its own taskbar button
 - **[Settings page, export and import](#settings)**
@@ -25,6 +26,8 @@ When Tabby starts, it shows the launcher: one card per workspace, with its color
 - **Show on startup** (bottom right) switches the launcher off, so Tabby starts with a terminal as usual.
 - `Esc` closes the launcher.
 
+At startup the launcher is a small window in the middle of the screen, like Chrome's profile picker. Tabby shows its window before plugins load, so the window first appears at its usual size and then shrinks. It grows to the workspace's size once you pick one.
+
 ![Adding a workspace](docs/screenshots/launcher-add.png)
 
 Hover a card and click **⋯**, or right-click it, to rename it, change its color or delete it. A workspace can only be deleted while no window has it open. If you rename a workspace, launchers open in other windows update right away.
@@ -36,6 +39,10 @@ You can open the launcher at any time:
 - Press `Ctrl+Alt+N` (`⌘⌥N` on macOS). Change it under Settings → Hotkeys → "Workspaces: show launcher".
 - Run **Workspaces: Show launcher** from the command palette.
 
+Over a window with tabs, the launcher is a panel in the middle of the window; click outside it or press `Esc` to go back.
+
+![The launcher over a window with tabs](docs/screenshots/launcher-panel.png)
+
 ### One window per workspace
 
 The window shows which workspace it belongs to in three places:
@@ -46,6 +53,10 @@ The window shows which workspace it belongs to in three places:
 ![A workspace window](docs/screenshots/window.png)
 
 Picking another workspace from the launcher opens it in a new window. If it's already open somewhere, that window comes to the front instead: a workspace is only ever open in one window, even if two windows try to open it at the same moment.
+
+### Window size per workspace
+
+Each workspace remembers its window's size, position and maximized state, and its window opens there again, like a Chrome profile. If that screen is gone, the window stays where Tabby put it.
 
 ### Pinned tabs
 
@@ -100,10 +111,8 @@ macOS has only one Dock icon per app, so the `[workspace name]` in the window ti
 
 | Setting | What it does |
 |---|---|
-| Show launcher on startup | Off: Tabby starts with a terminal as usual |
-| Open the last workspace | Skip the launcher and reopen the workspace you used last (the launcher still shows if it's already open in another window) |
-| List workspaces on the start page | Recent workspaces on an empty window's start page |
-| Workspaces on the start page | How many it lists, 1–20 (default 8) |
+| When Tabby starts | Open a terminal (as usual), show the launcher in a small window in the middle of the screen, or reopen the last workspace (the launcher still shows if that one is already open in another window) |
+| Workspaces on the start page | Recent workspaces on an empty window's start page: the switch turns the list on or off, the number sets how many it lists, 1–20 (default 8) |
 | tmux for new pins | New WSL, SSH and macOS/Linux shell pins get a persistent tmux session, starting the next time the workspace opens |
 | Toolbar badge | The colored badge in the tab bar (applies to new windows) |
 | Color stripe | The workspace-colored line across the top of the window |

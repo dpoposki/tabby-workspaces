@@ -3,7 +3,7 @@ import { ConfigProvider, ConfigService, Platform } from 'tabby-core'
 
 /** Settings → Workspaces, stored under `workspaces` in Tabby's config.yaml */
 export interface WorkspacesSettings {
-    /** Show the launcher when Tabby starts, instead of a terminal */
+    /** Show the launcher when Tabby starts (in a small centered window), instead of a terminal */
     showLauncher: boolean
     /** At startup, open the most recently used workspace instead of showing the launcher */
     openLastWorkspace: boolean

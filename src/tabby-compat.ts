@@ -20,6 +20,22 @@ import { tagWslShells } from './wsl'
 export interface NativeWindow {
     setIcon (icon: string): void
     setAppDetails (details: { appId?: string, appIconPath?: string, appIconIndex?: number, relaunchCommand?: string, relaunchDisplayName?: string }): void
+    getBounds (): Bounds
+    /** The size and place the window has when it's not maximized */
+    getNormalBounds (): Bounds
+    setBounds (bounds: Bounds): void
+    isMaximized (): boolean
+    isMinimized (): boolean
+    isFullScreen (): boolean
+    maximize (): void
+    unmaximize (): void
+}
+
+export interface Bounds {
+    x: number
+    y: number
+    width: number
+    height: number
 }
 
 /** What the patches call back into */
