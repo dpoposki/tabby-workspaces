@@ -231,24 +231,51 @@ export class WorkspacesService {
     }
 
     private async renameCurrent (): Promise<void> {
-        if (!this.current) {
-            return
-        }
-        const name = await this.prompt('Rename workspace', this.current.name)
-        if (name) {
-            this.current = { ...this.current, name }
-            this.store.upsert(this.current)
-            this.applyWindowChrome()
+        if (this.current) {
+            await this.renameWorkspace(this.current)
         }
     }
 
     private async changeCurrentColor (): Promise<void> {
-        if (!this.current) {
-            return
+        if (this.current) {
+            await this.changeColor(this.current)
         }
-        this.current = { ...this.current, color: await this.pickColor(this.current.color) }
-        this.store.upsert(this.current)
-        this.applyWindowChrome()
+    }
+
+    /** Other windows showing this workspace pick the change up through the storage event. */
+    async renameWorkspace (workspace: Workspace): Promise<boolean> {
+        const name = await this.prompt('Rename workspace', workspace.name)
+        if (!name || name === workspace.name) {
+            return false
+        }
+        this.updateWorkspace(workspace.id, { name })
+        return true
+    }
+
+    async changeColor (workspace: Workspace): Promise<boolean> {
+        const color = await this.pickColor(workspace.color)
+        if (color === workspace.color) {
+            return false
+        }
+        this.updateWorkspace(workspace.id, { color })
+        return true
+    }
+
+    private updateWorkspace (id: string, changes: Partial<Workspace>): void {
+        const stored = this.store.get(id)
+        if (stored) {
+            this.store.upsert({ ...stored, ...changes })
+        }
+        if (this.current?.id === id) {
+            this.current = { ...this.current, ...changes }
+            this.applyWindowChrome()
+        }
+    }
+
+    /** Workspaces open in a window (this one or another) can't be deleted */
+    async canDelete (workspace: Workspace, openElsewhere?: Set<string>): Promise<boolean> {
+        openElsewhere ??= await this.registry.openElsewhere()
+        return workspace.id !== this.current?.id && !openElsewhere.has(workspace.id)
     }
 
     private async promptDelete (): Promise<void> {
@@ -266,6 +293,15 @@ export class WorkspacesService {
         } catch {
             return
         }
+        await this.deleteWorkspace(workspace)
+    }
+
+    /** Asks for confirmation; returns whether it was deleted. */
+    async deleteWorkspace (workspace: Workspace): Promise<boolean> {
+        if (!await this.canDelete(workspace)) {
+            this.notifications.info('Workspace is open', 'Close its window before deleting it.')
+            return false
+        }
         const pinCount = this.store.getPins(workspace.id).length
         const answer = await this.platform.showMessageBox({
             type: 'warning',
@@ -275,10 +311,12 @@ export class WorkspacesService {
             defaultId: 1,
             cancelId: 1,
         })
-        if (answer.response === 0) {
-            this.store.remove(workspace.id)
-            this.notifications.notice(`Workspace "${workspace.name}" deleted`)
+        if (answer.response !== 0) {
+            return false
         }
+        this.store.remove(workspace.id)
+        this.notifications.notice(`Workspace "${workspace.name}" deleted`)
+        return true
     }
 
     // ---------------------------------------------------------------- attach & restore

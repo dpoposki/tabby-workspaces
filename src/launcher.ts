@@ -1,5 +1,5 @@
 import { Injectable, Injector, NgZone } from '@angular/core'
-import { AppService, ConfigService, HostAppService } from 'tabby-core'
+import { AppService, ConfigService, HostAppService, MenuItemOptions, PlatformService } from 'tabby-core'
 import { TerminalService } from 'tabby-local'
 import { Workspace, WORKSPACE_COLORS } from './models'
 import { WorkspaceStore } from './store'
@@ -11,7 +11,8 @@ const ROOT_ID = 'tabby-workspaces-launcher'
 /**
  * Full-window workspace chooser, like Chrome's profile picker: one big card per
  * workspace, an "Add" card, "Guest mode" (a plain window) and a "Show on startup" switch.
- * Shown over the first window at startup; plain DOM so it can appear before anything else.
+ * Shown over the first window at startup and from the toolbar badge; plain DOM so it
+ * can appear before anything else.
  */
 @Injectable({ providedIn: 'root' })
 export class WorkspacesLauncher {
@@ -24,6 +25,7 @@ export class WorkspacesLauncher {
         private config: ConfigService,
         private hostApp: HostAppService,
         private injector: Injector,
+        private platform: PlatformService,
         private registry: WindowRegistry,
         private service: WorkspacesService,
         private store: WorkspaceStore,
@@ -70,6 +72,9 @@ export class WorkspacesLauncher {
 
     private open (workspace: Workspace): void {
         this.hide()
+        if (workspace.id === this.service.current?.id) {
+            return
+        }
         this.run(() => this.service.openWorkspace(workspace))
     }
 
@@ -97,6 +102,38 @@ export class WorkspacesLauncher {
         })
     }
 
+    /** Chrome-like "⋯" on a card: edit or delete that workspace without leaving the launcher */
+    private async showCardMenu (workspace: Workspace, event: MouseEvent): Promise<void> {
+        const deletable = await this.service.canDelete(workspace)
+        const edit = (action: () => Promise<boolean>) => () => this.run(async () => {
+            if (await action()) {
+                this.refresh()
+            }
+        })
+        const items: MenuItemOptions[] = [
+            { label: 'Rename…', click: edit(() => this.service.renameWorkspace(workspace)) },
+            { label: 'Change color…', click: edit(() => this.service.changeColor(workspace)) },
+            { type: 'separator' },
+            {
+                label: deletable ? 'Delete…' : 'Delete… (close its window first)',
+                enabled: deletable,
+                click: edit(() => this.service.deleteWorkspace(workspace)),
+            },
+        ]
+        this.platform.popupContextMenu(items, event)
+    }
+
+    /** Re-render the cards after an edit, keeping the launcher open */
+    private refresh (): void {
+        const grid = this.grid
+        if (!grid) {
+            return
+        }
+        grid.replaceChildren(...this.service.sortedWorkspaces().map((workspace, index) => this.workspaceCard(workspace, index)), this.addCard())
+        grid.querySelectorAll<HTMLElement>('.wl-card').forEach(card => card.style.animation = 'none')
+        this.markOpenElsewhere().catch(() => null)
+    }
+
     private run (action: () => Promise<unknown>): void {
         this.zone.run(() => action().catch(error => console.error('[workspaces]', error)))
     }
@@ -110,6 +147,14 @@ export class WorkspacesLauncher {
         root.addEventListener('keydown', event => this.onKeyDown(event))
 
         root.appendChild(el('div', 'wl-drag'))
+        if (this.service.current || this.app.tabs.length) {
+            // Opened over a window that has content: make the way back obvious
+            const close = el('button', 'wl-close') as HTMLButtonElement
+            close.innerHTML = CLOSE_ICON
+            close.title = 'Back to this window (Esc)'
+            close.addEventListener('click', () => this.hide())
+            root.appendChild(close)
+        }
 
         const main = el('div', 'wl-main')
         main.appendChild(el('h1', 'wl-title', 'Choose a workspace'))
@@ -152,12 +197,29 @@ export class WorkspacesLauncher {
         if (index < 9) {
             card.appendChild(el('span', 'wl-key', String(index + 1)))
         }
+        // A span, not a nested <button> (invalid inside the card button)
+        const more = el('span', 'wl-more')
+        more.innerHTML = MORE_ICON
+        more.title = 'Edit or delete'
+        more.setAttribute('role', 'button')
+        more.addEventListener('click', event => {
+            event.stopPropagation()
+            this.showCardMenu(workspace, event).catch(error => console.error('[workspaces]', error))
+        })
+        card.appendChild(more)
+        card.addEventListener('contextmenu', event => {
+            event.preventDefault()
+            this.showCardMenu(workspace, event).catch(error => console.error('[workspaces]', error))
+        })
         card.appendChild(el('span', 'wl-avatar', (workspace.name.trim()[0] ?? '?').toUpperCase()))
         card.appendChild(el('span', 'wl-name', workspace.name))
         const pins = this.store.getPins(workspace.id).length
         const meta = [`${pins} pinned tab${pins === 1 ? '' : 's'}`]
         const opened = workspace.lastOpenedAt ?? workspace.createdAt
-        if (opened) {
+        if (workspace.id === this.service.current?.id) {
+            card.classList.add('wl-current')
+            meta.splice(0, meta.length, 'This window')
+        } else if (opened) {
             meta.push(timeAgo(opened))
         }
         card.appendChild(el('span', 'wl-meta', meta.join(' · ')))
@@ -257,6 +319,9 @@ export class WorkspacesLauncher {
     private async markOpenElsewhere (): Promise<void> {
         const open = await this.registry.openElsewhere()
         for (const id of open) {
+            if (id === this.service.current?.id) {
+                continue
+            }
             const card = this.grid?.querySelector<HTMLElement>(`.wl-card[data-id="${CSS.escape(id)}"]`)
             const meta = card?.querySelector('.wl-meta')
             if (meta) {
@@ -297,6 +362,14 @@ function timeAgo (at: number): string {
     const days = Math.round(hours / 24)
     return days < 30 ? `${days}d ago` : new Date(at).toLocaleDateString()
 }
+
+const MORE_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+    <circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/>
+</svg>`
+
+const CLOSE_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+    <path d="M4 4l8 8M12 4l-8 8"/>
+</svg>`
 
 const GUEST_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3">
     <circle cx="8" cy="5.5" r="2.8"/><path d="M2.5 14.5c.6-3 2.8-4.6 5.5-4.6s4.9 1.6 5.5 4.6" stroke-linecap="round"/>
@@ -381,6 +454,25 @@ const STYLES = `
     font-size: 11px; color: var(--wl-muted); opacity: 0; transition: opacity .15s;
 }
 .wl-card:hover .wl-key, .wl-card:focus-visible .wl-key { opacity: 1; }
+.wl-more {
+    position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--wl-muted); opacity: 0; transition: opacity .15s, background .15s;
+}
+.wl-card:hover .wl-more, .wl-card:focus-visible .wl-more { opacity: 1; }
+.wl-more:hover { background: var(--wl-card-hover); color: var(--wl-fg); }
+.wl-current { border-color: color-mix(in srgb, var(--wl-color) 45%, transparent); }
+.wl-current .wl-meta { color: var(--wl-fg); }
+.wl-current .wl-meta::before {
+    content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; vertical-align: 1px;
+    border-radius: 50%; background: var(--wl-color);
+}
+.wl-close {
+    position: absolute; top: 46px; right: 20px; z-index: 1; width: 32px; height: 32px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; background: transparent; color: var(--wl-muted); cursor: pointer;
+}
+.wl-close:hover, .wl-close:focus-visible { background: var(--wl-card-hover); color: var(--wl-fg); outline: none; }
 .wl-add { background: transparent; border: 1px dashed var(--wl-line); }
 .wl-add .wl-avatar {
     background: transparent; border: 1px dashed var(--wl-line); box-shadow: none;

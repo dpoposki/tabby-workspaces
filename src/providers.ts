@@ -69,11 +69,8 @@ export class WorkspacesCommandProvider extends CommandProvider {
         badge.id = 'workspaces:menu'
         badge.locations = [CommandLocation.RightToolbar]
         badge.weight = -10
-        // Without a workspace the badge shows "?", and clicking it should just let you pick one.
-        // Don't hold Tabby's command queue while the menu (and any prompt it opens) is up.
-        badge.run = async () => {
-            (service.current ? service.showMenu() : service.showPicker()).catch(error => console.error('[workspaces]', error))
-        }
+        // Like Chrome's profile button: the launcher, where you switch, add or edit workspaces
+        badge.run = async () => this.launcher.show()
 
         const open = new Command()
         open.id = 'workspaces:open'
