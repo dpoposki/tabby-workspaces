@@ -1,6 +1,6 @@
 {
   "name": "tabby-workspaces",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Chrome-style workspaces for Tabby: one window per workspace, with named pinned tabs that come back where you left them",
   "keywords": [
     "tabby-plugin",
