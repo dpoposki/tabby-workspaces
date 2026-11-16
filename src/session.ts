@@ -1,12 +1,13 @@
 import { Injectable } from '@angular/core'
 import { BehaviorSubject, Subject } from 'rxjs'
-import { AppService, BaseTabComponent, NotificationsService, TabRecoveryService } from 'tabby-core'
+import { AppService, BaseTabComponent, ConfigService, NotificationsService, TabRecoveryService } from 'tabby-core'
 import { newId, PinMeta, PinRecord, plural, Workspace } from './models'
 import { WorkspaceStore } from './store'
 import { ErrorReporter } from './errors'
 import type { TabbyHooks } from './tabby-compat'
 import { getTerminal, waitForPrompt, waitForSession } from './terminal'
-import { getWslTarget, lookupWslCwds, normalizeWslCwd, stripWslTagFromEnv } from './wsl'
+import { getWslTarget, isWslTab, lookupWslCwds, normalizeWslCwd, stripWslTagFromEnv } from './wsl'
+import { workspacesSettings } from './config'
 import { buildTmuxCommand, killTmuxSession, tmuxSessionName } from './tmux'
 
 const SAVE_DEBOUNCE_MS = 800
@@ -36,6 +37,7 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
 
     constructor (
         private app: AppService,
+        private config: ConfigService,
         private tabRecovery: TabRecoveryService,
         private notifications: NotificationsService,
         private store: WorkspaceStore,
@@ -168,7 +170,12 @@ export class WorkspaceSession implements Omit<TabbyHooks, 'decorateTitle'> {
     afterPin (tab: BaseTabComponent, wasPinned: boolean): void {
         if (!wasPinned && tab.pinned && this.current && !this.restoring) {
             // A new pin: ask for its name
-            this.getMeta(tab)
+            const meta = this.getMeta(tab)
+            // tmux by default starts with the next opening of the workspace: typing into
+            // the tab now could land in a program that's running there
+            if (workspacesSettings(this.config).tmuxByDefault && isWslTab(tab)) {
+                meta.tmux = true
+            }
             setTimeout(() => this.app.renameTab(tab))
         }
         this.scheduleSave()

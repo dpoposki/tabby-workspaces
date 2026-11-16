@@ -20,6 +20,9 @@ const RECOVER_TABS_RESTORED_KEY = 'tabbyWorkspaces.recoverTabsRestored'
 @Injectable({ providedIn: 'root' })
 export class WorkspacesService {
     private initialized = false
+    private markReady!: () => void
+    /** Settles once startup (onAppReady) has finished, whether it worked or not */
+    private ready = new Promise<void>(resolve => { this.markReady = resolve })
 
     constructor (
         private app: AppService,
@@ -76,7 +79,9 @@ export class WorkspacesService {
         ))
 
         this.app.ready$.subscribe(() => {
-            setTimeout(() => this.onAppReady().catch(error => this.errors.report('Workspaces: startup failed', error)), STARTUP_DELAY_MS)
+            setTimeout(() => this.onAppReady()
+                .catch(error => this.errors.report('Workspaces: startup failed', error))
+                .finally(() => this.markReady()), STARTUP_DELAY_MS)
         })
     }
 
@@ -94,6 +99,22 @@ export class WorkspacesService {
         }
         // Otherwise the window starts as a plain window; the start page entries and the
         // toolbar badge open the launcher (the first window shows it via the CLI handler).
+    }
+
+    /**
+     * Opens the most recently used workspace in this first window, once startup is done.
+     * Returns false when there is none, or it's already open in another window, so the
+     * caller can show the launcher instead.
+     */
+    async openLastOnStartup (): Promise<boolean> {
+        await this.ready
+        const last = this.sortedWorkspaces()[0]
+        if (!last || this.current || (await this.registry.openElsewhere()).has(last.id)) {
+            return false
+        }
+        await this.openHere(last)
+        // openHere may not open it (another window claimed it first); read the session again
+        return this.session.current?.id === last.id
     }
 
     /** Earlier versions of the plugin turned the setting off in the user's config; turn it back on once. */

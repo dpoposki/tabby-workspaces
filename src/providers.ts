@@ -9,7 +9,7 @@ import { WorkspaceDialogs } from './dialogs'
 import { isWslTab } from './wsl'
 import { WorkspacesLauncher } from './launcher'
 import { ErrorReporter } from './errors'
-import { HOTKEY_LAUNCHER, workspacesSettings } from './config'
+import { HOTKEY_LAUNCHER, startPageCount, workspacesSettings } from './config'
 import { initialOf, safeColor } from './models'
 
 /** Right-click menu on a pinned tab: pin name, startup command, tmux. */
@@ -92,7 +92,7 @@ export class WorkspacesCommandProvider extends CommandProvider {
         // Start page of a window without a workspace: one entry per recent workspace
         // (like Chrome's profile picker), then "All workspaces…" for the launcher
         const settings = workspacesSettings(this.config)
-        const recent = session.current || !settings.startPageList ? [] : service.sortedWorkspaces().slice(0, START_PAGE_MAX_WORKSPACES)
+        const recent = session.current || !settings.startPageList ? [] : service.sortedWorkspaces().slice(0, startPageCount(settings))
         const entries = recent.map(workspace => {
             const entry = new Command()
             entry.id = `workspaces:start-page:${workspace.id}`
@@ -120,7 +120,6 @@ export class WorkspacesCommandProvider extends CommandProvider {
     }
 }
 
-const START_PAGE_MAX_WORKSPACES = 8
 /** Left of Tabby's own right-hand toolbar buttons (settings cog is 0) */
 const BADGE_WEIGHT = -10
 
@@ -128,7 +127,8 @@ const BADGE_WEIGHT = -10
  * When Tabby starts, show the workspace launcher instead of the terminal it would
  * auto-open. Runs just before tabby-local's AutoOpenTabCLIHandler (priority -1000);
  * handlers for explicit CLI commands (`tabby run`, `tabby open`, ...) have higher
- * priority and still win. With "Show on startup" off this does nothing, so Tabby
+ * priority and still win. With "Open the last workspace" on, that workspace opens instead
+ * of the launcher. With "Show on startup" off this does nothing, so Tabby
  * starts as usual. Only the first window gets this event; second-instance launches
  * and new windows already start empty.
  */
@@ -137,7 +137,12 @@ export class WorkspacesStartupCLIHandler extends CLIHandler {
     firstMatchOnly = true
     priority = -999.5
 
-    constructor (private config: ConfigService, private launcher: WorkspacesLauncher) {
+    constructor (
+        private config: ConfigService,
+        private launcher: WorkspacesLauncher,
+        private service: WorkspacesService,
+        private errors: ErrorReporter,
+    ) {
         super()
     }
 
@@ -145,6 +150,17 @@ export class WorkspacesStartupCLIHandler extends CLIHandler {
         // enableWelcomeTab: Tabby's own first-run screen gets priority
         if (event.secondInstance || this.config.store.enableWelcomeTab || !this.launcher.showOnStartup) {
             return false
+        }
+        if (workspacesSettings(this.config).openLastWorkspace && this.service.sortedWorkspaces().length) {
+            // Not awaited: the workspace opens once Tabby's startup is done. If it can't
+            // (already open in another window), the launcher shows instead.
+            this.service.openLastOnStartup()
+                .then(opened => opened || this.launcher.show())
+                .catch(error => {
+                    this.errors.report('Could not open the last workspace', error)
+                    this.launcher.show()
+                })
+            return true
         }
         this.launcher.show()
         return true

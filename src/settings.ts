@@ -4,6 +4,7 @@ import { SettingsTabProvider } from 'tabby-settings'
 import { WorkspacesBackup } from './backup'
 import { ErrorReporter } from './errors'
 import { TaskbarIdentity } from './taskbar'
+import { START_PAGE_COUNT_MAX, START_PAGE_COUNT_MIN } from './config'
 
 /** Settings → Workspaces */
 @Component({
@@ -18,12 +19,38 @@ import { TaskbarIdentity } from './taskbar'
             <toggle [(ngModel)]="config.store.workspaces.showLauncher" (ngModelChange)="config.save()"></toggle>
         </div>
 
+        <div class="form-line" *ngIf="config.store.workspaces.showLauncher">
+            <div class="header">
+                <div class="title">Open the last workspace</div>
+                <div class="description">Skip the launcher and reopen the workspace you used last. If it's already open in another window, the launcher shows as usual</div>
+            </div>
+            <toggle [(ngModel)]="config.store.workspaces.openLastWorkspace" (ngModelChange)="config.save()"></toggle>
+        </div>
+
         <div class="form-line">
             <div class="header">
                 <div class="title">List workspaces on the start page</div>
                 <div class="description">Recent workspaces between "New terminal" and "Profiles & connections"</div>
             </div>
             <toggle [(ngModel)]="config.store.workspaces.startPageList" (ngModelChange)="config.save()"></toggle>
+        </div>
+
+        <div class="form-line" *ngIf="config.store.workspaces.startPageList">
+            <div class="header">
+                <div class="title">Workspaces on the start page</div>
+                <div class="description">How many recent workspaces it lists ({{ countMin }}–{{ countMax }})</div>
+            </div>
+            <input class="form-control" type="number" style="width: 6rem"
+                [min]="countMin" [max]="countMax" step="1"
+                [(ngModel)]="config.store.workspaces.startPageCount" (ngModelChange)="config.save()">
+        </div>
+
+        <div class="form-line">
+            <div class="header">
+                <div class="title">tmux for new WSL pins</div>
+                <div class="description">New pins of WSL tabs get a persistent tmux session, which starts the next time the workspace opens. You can still switch it per pin: right-click the tab → Pinned tab</div>
+            </div>
+            <toggle [(ngModel)]="config.store.workspaces.tmuxByDefault" (ngModelChange)="config.save()"></toggle>
         </div>
 
         <div class="form-line">
@@ -76,6 +103,8 @@ import { TaskbarIdentity } from './taskbar'
 export class WorkspacesSettingsTabComponent {
     /** Not on macOS, where windows are told apart by their title */
     taskbarSupported: boolean
+    countMin = START_PAGE_COUNT_MIN
+    countMax = START_PAGE_COUNT_MAX
 
     exportWorkspaces = () => this.backup.exportWorkspaces()
     importWorkspaces = () => this.backup.importWorkspaces()

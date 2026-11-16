@@ -65,7 +65,7 @@ Tabby can't see where a WSL shell has `cd`'d, because it only controls `wsl.exe`
 
 ### Persistent tmux sessions
 
-This is for WSL tabs only and is off by default. When it's on, the pin attaches to a tmux session named `tabby-<workspace>-<pin>`. That session keeps running when you close the window, so your programs and scrollback are still there when you reopen the workspace. tmux keeps track of its own panes' folders.
+This is for WSL tabs only and is off by default (turn on **tmux for new WSL pins** in Settings → Workspaces to make it the default). When it's on, the pin attaches to a tmux session named `tabby-<workspace>-<pin>`. That session keeps running when you close the window, so your programs and scrollback are still there when you reopen the workspace. tmux keeps track of its own panes' folders.
 
 Switching tmux off, or unpinning the tab and then closing it, ends the session.
 
@@ -92,7 +92,10 @@ macOS has only one Dock icon per app, so the `[workspace name]` in the window ti
 | Setting | What it does |
 |---|---|
 | Show launcher on startup | Off: Tabby starts with a terminal as usual |
+| Open the last workspace | Skip the launcher and reopen the workspace you used last (the launcher still shows if it's already open in another window) |
 | List workspaces on the start page | Recent workspaces on an empty window's start page |
+| Workspaces on the start page | How many it lists, 1–20 (default 8) |
+| tmux for new WSL pins | New WSL pins get a persistent tmux session, starting the next time the workspace opens |
 | Toolbar badge | The colored badge in the tab bar (applies to new windows) |
 | Color stripe | The workspace-colored line across the top of the window |
 | Taskbar icon | Per-workspace icon and, on Windows, its own taskbar button |
