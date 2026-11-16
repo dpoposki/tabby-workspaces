@@ -45,9 +45,20 @@ jobs:
             echo "::error::Tag $TAG doesn't match package.json version $version: run npm version first."
             exit 1
           fi
+      # A version npm already has (published by hand, or a re-run) is skipped, not an error.
+      - name: Check npm doesn't have this version yet
+        id: check
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "tabby-workspaces@$version" version >/dev/null 2>&1; then
+            echo "::notice::tabby-workspaces@$version is already on npm, nothing to publish."
+            echo "skip=true" >>"$GITHUB_OUTPUT"
+          fi
       - name: Install dependencies
+        if: steps.check.outputs.skip != 'true'
         run: npm ci --legacy-peer-deps
       # prepublishOnly typechecks and builds. Verbose, because npm logs why trusted publishing
       # failed only at that level, then reports just ENEEDAUTH.
       - name: Publish
+        if: steps.check.outputs.skip != 'true'
         run: npm publish --access public --provenance --loglevel verbose
